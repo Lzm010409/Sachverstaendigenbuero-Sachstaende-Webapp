@@ -277,7 +277,14 @@
         c._resolved = "sent";
         c._decidedLocal = Date.now();
         c._resolvedMsg = r.message || `Entwurf an ${c.recipOrg} (${c.recipEmail}) freigegeben.`;
-        toast("ok", "Freigegeben", `${c.token}: ${r.message || "erledigt."}`);
+        if (r.outlookLink) {
+          // Direkt zum Entwurf springen — dort nur noch prüfen und senden.
+          toastLink("ok", "Freigegeben", `${c.token}: ${esc(r.message)}`, r.outlookLink, "In Outlook öffnen");
+          window.open(r.outlookLink, "_blank", "noopener");
+        } else {
+          toast(r.hinweis ? "warn" : "ok", "Freigegeben",
+            esc(r.message) + (r.hinweis ? `<br><span style="opacity:.8">${esc(r.hinweis)}</span>` : ""));
+        }
         afterResolve(c);
       } catch (e) { sendBtn.disabled = false; toast("err", "Fehler", esc(e.message)); }
     });
@@ -332,6 +339,12 @@
     else if (isMobile()) { activeId = null; renderList(); setView("list"); }
     else { activeId = null; renderList(); detailEl.innerHTML = `<div class="empty">Alle Fälle in diesem Filter bearbeitet. 🎉<br><span style="font-size:12px;">Wechsle den Filter oben oder starte den nächsten Lauf.</span></div>`; }
     renderList();
+  }
+
+  /** Hinweis mit Link — für den frisch angelegten Outlook-Entwurf. */
+  function toastLink(kind, title, body, href, linkText) {
+    toast(kind, title, `${body}<br><a href="${href}" target="_blank" rel="noopener"
+      style="color:var(--accent);font-weight:600">${esc(linkText)} ↗</a>`);
   }
 
   function toast(kind, title, body) {
@@ -392,8 +405,20 @@
       renderKpis();
       renderList();
       setView(isMobile() ? "list" : "detail");
-      const first = CASES.find(isPending) || CASES.find(c => visible(c));
-      if (first) selectCase(first.id, { keepView: true });
+      // Aus der Übersichtsmail kommt ein Link mit ?fall=<Aktenzeichen>.
+      const gesucht = new URLSearchParams(location.search).get("fall");
+      const ausLink = gesucht
+        ? CASES.find(c => String(c.token) === gesucht || String(c.id) === gesucht)
+        : null;
+      if (ausLink && !visible(ausLink)) {
+        // Der verlinkte Fall steckt in einem anderen Filter — Filter umstellen,
+        // sonst zeigt der Link ins Leere.
+        filter = "alle";
+        document.querySelectorAll("#filters button").forEach(x =>
+          x.classList.toggle("active", x.dataset.f === "alle"));
+      }
+      const first = ausLink || CASES.find(isPending) || CASES.find(c => visible(c));
+      if (first) selectCase(first.id, { keepView: !ausLink });
       else detailEl.innerHTML = `<div class="empty">Nichts zu prüfen. 🎉<br><span style="font-size:12px;">Erledigte Fälle über den Filter „Erledigt".</span></div>`;
     } catch (e) {
       detailEl.innerHTML = `<div class="empty">Fehler beim Laden: ${esc(e.message)}</div>`;

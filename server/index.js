@@ -41,6 +41,7 @@ const DEMO_MODE = String(process.env.DEMO_MODE || "").toLowerCase() === "true" |
 // konfiguriert, greift Basic-Auth als Notausgang — damit die Anwendung nie
 // unbeabsichtigt offen im Netz steht, aber auch nicht aussperrt.
 const auth = require("./auth");
+const graph = require("./graph");
 const AUTH_USER = process.env.BASIC_AUTH_USER;
 const AUTH_PASS = process.env.BASIC_AUTH_PASS;
 
@@ -187,15 +188,49 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
     const noteHtml = renderApprovalNote(c, body);
     await pd.addNote(c.dealId, noteHtml);
 
+    // Entwurf ins Postfach legen, damit nichts aus einer Notiz kopiert werden
+    // muss — das erzeugte beim Einfügen schwarze Unterstreichungen.
+    let outlook = null;
+    if (graph.isConfigured() && c.recipEmail) {
+      try {
+        outlook = await graph.createDraft({
+          to: c.recipEmail,
+          subject: c.subject || `Sachstandsanfrage · ${c.name || ""} · [Az. ${c.token || ""}]`,
+          text: body
+        });
+      } catch (err) {
+        console.warn("[graph] Entwurf konnte nicht angelegt werden:", err.message);
+        outlook = { error: err.message };
+      }
+    }
+
     const state = store.load();
-    store.setDecision(state, c.id, "approved", `freigegeben, Notiz am Deal ${c.dealId} hinterlegt`);
+    store.setDecision(state, c.id, "approved",
+      `freigegeben, Notiz am Deal ${c.dealId}` + (outlook && outlook.id ? ", Entwurf in Outlook" : ""));
+    if (outlook && outlook.id) {
+      const gespeichert = state.cases[c.id];
+      if (gespeichert) gespeichert.outlookDraft = { id: outlook.id, webLink: outlook.webLink };
+    }
     store.save(state);
 
+    const wohin = c.recipEmail || "Empfänger offen";
+    let message, hinweis = null;
+    if (outlook && outlook.id) {
+      message = `Freigegeben. Entwurf liegt in Outlook, Adressat ${wohin}.`;
+    } else if (outlook && outlook.error) {
+      message = `Freigegeben und als Notiz hinterlegt. Outlook-Entwurf schlug fehl.`;
+      hinweis = outlook.error;
+    } else if (!graph.isConfigured()) {
+      message = `Freigegeben. Entwurf als Notiz am Deal hinterlegt (${wohin}).`;
+      hinweis = graph.missingHint();
+    } else {
+      message = `Freigegeben, aber ohne Empfängeradresse — nur als Notiz am Deal.`;
+    }
+
     res.json({
-      ok: true,
-      message: `Freigegeben. Entwurf als Notiz am Deal hinterlegt (${c.recipEmail || "Empfänger offen"}).`,
-      sent: false,
-      note: "Versand über Outlook ist noch nicht verdrahtet — der freigegebene Text liegt als Notiz am Deal."
+      ok: true, message, sent: false,
+      outlookLink: outlook && outlook.webLink ? outlook.webLink : null,
+      hinweis
     });
   } catch (err) { next(err); }
 });

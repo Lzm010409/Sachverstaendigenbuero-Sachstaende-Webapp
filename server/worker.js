@@ -14,6 +14,7 @@ const { analyzeCase, extractToken, fmtDE } = require("./analyze");
 const { buildDraft } = require("./draft");
 const { getDealFacts } = require("./fields");
 const directory = require("./directory");
+const digest = require("./digest");
 const ai = require("./ai");
 const store = require("./store");
 
@@ -341,6 +342,17 @@ async function runOnce({ today = new Date(), force = false } = {}) {
     console.log(`[worker] Lauf fertig: ${state.lastRunSummary.analyzed} Fälle`
       + ` (${wiederverwendet} unverändert übernommen), ${state.lastRunSummary.apiAufrufe} Pipedrive-Aufrufe,`
       + ` ${pending} zur Freigabe.`);
+    // Tägliche Übersicht — prüft selbst, ob heute schon eine raus ist.
+    try {
+      const d = await digest.maybeSendDigest(state, store.listCases(state));
+      if (d.gesendet) store.save(state);          // Stempel festhalten
+      else if (d.grund && !/bereits|vor \d+ Uhr/.test(d.grund)) {
+        console.log(`[digest] nicht versendet: ${d.grund}`);
+      }
+    } catch (err) {
+      console.warn("[digest] Versand fehlgeschlagen:", err.message);
+    }
+
     store.save(state);
     lastError = null;
 

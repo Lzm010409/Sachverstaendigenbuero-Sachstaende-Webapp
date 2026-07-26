@@ -168,13 +168,67 @@
       `<div class="volltext">${esc(voll)}</div></details>`;
   }
 
+  // --- Leseansicht ---------------------------------------------------------
+  // Der Verlauf bleibt als Übersicht kurz; wer einen Text ganz lesen will,
+  // bekommt ihn groß darüber. Vorher steckte der Volltext in einem schmalen
+  // Kästchen in der Spalte — für eine ganze Anwaltsmail unbrauchbar.
+  const leser = document.getElementById("leser");
+
+  function leserAuf({ titel, sub, text, fuss }) {
+    document.getElementById("leserTitel").textContent = titel || "";
+    document.getElementById("leserSub").textContent = sub || "";
+    document.getElementById("leserRumpf").textContent = text || "";
+    document.getElementById("leserFuss").textContent = fuss || "";
+    leser.classList.add("auf");
+    document.body.style.overflow = "hidden";
+    document.getElementById("leserRumpf").scrollTop = 0;
+    document.getElementById("leserRumpf").focus();
+  }
+
+  function leserZu() {
+    leser.classList.remove("auf");
+    document.body.style.overflow = "";
+  }
+
+  leser.addEventListener("click", (e) => { if (e.target.dataset.zu) leserZu(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && leser.classList.contains("auf")) leserZu();
+  });
+
+  /**
+   * Fehlt der Volltext, wird er beim ersten Öffnen aus Pipedrive nachgeholt.
+   *
+   * Der Lauf lädt den Rumpf nur für die neuesten Nachrichten — das spart den
+   * größten Posten im Tageskontingent. Hier wird gezielt nachgeladen, wenn
+   * wirklich jemand hineinsieht, und das Ergebnis bleibt dauerhaft gespeichert.
+   */
+  let ladeLaeuft = null;
+  async function volltextSichern(c) {
+    if (c.volltextGeladen || c._volltextVersucht) return;
+    if (ladeLaeuft) return ladeLaeuft;
+    c._volltextVersucht = true;
+    ladeLaeuft = (async () => {
+      try {
+        const r = await api(`/api/cases/${c.id}/volltext`, { method: "POST" });
+        if (r.notizen) c.notizen = r.notizen;
+        if (r.thread) c.thread = r.thread;
+        c.volltextGeladen = true;
+        if (r.mailFehler) toast("warn", "Mailverlauf unvollständig", esc(r.mailFehler));
+      } catch (e) {
+        toast("warn", "Volltext nicht geladen", esc(e.message));
+      } finally { ladeLaeuft = null; }
+    })();
+    return ladeLaeuft;
+  }
+
   function threadHtml(c) {
     if (!c.thread || !c.thread.length) return `<div class="thread"><div class="msg"><div></div><div class="snippet">Noch keine Korrespondenz im Postfach gefunden.</div></div></div>`;
-    return `<div class="thread">` + c.thread.map(m =>
-      `<div class="msg ${m.dir}"><div class="rail"><div class="dot"></div></div>` +
+    return `<div class="thread">` + c.thread.map((m, i) =>
+      `<div class="msg ${m.dir} oeffnen" data-mail="${i}" role="button" tabindex="0">` +
+      `<div class="rail"><div class="dot"></div></div>` +
       `<div><div class="who">${esc(m.who)}<span class="tag">${esc(m.tag)}</span><span class="when">${esc(m.when)}</span></div>` +
       `<div class="snippet">${esc(m.snippet)}</div>` +
-      langtext(m.full, "Ganze Nachricht") + `</div></div>`
+      `<div class="mehrHinweis">Ganze Nachricht lesen ›</div></div></div>`
     ).join("") + `</div>`;
   }
 
@@ -239,11 +293,13 @@
     if (!n.length) return "";
     return `<div class="card"><div class="card-head"><span class="h">Notizen in Pipedrive</span>` +
       `<span class="badge">${n.length} Notiz${n.length === 1 ? "" : "en"}</span></div>` +
-      n.map(x => {
-        const kurz = x.text.length > 260 ? x.text.slice(0, 260).trimEnd() + " …" : x.text;
-        return `<div class="notiz"><div class="when">${esc(x.when)}</div>` +
+      n.map((x, i) => {
+        const lang = x.text.length > 260;
+        const kurz = lang ? x.text.slice(0, 260).trimEnd() + " …" : x.text;
+        return `<div class="notiz${lang ? " oeffnen" : ""}"${lang ? ` data-notiz="${i}" role="button" tabindex="0"` : ""}>` +
+          `<div class="when">${esc(x.when)}</div>` +
           `<div class="snippet">${esc(kurz)}</div>` +
-          (x.text.length > 260 ? langtext(x.text, "Ganze Notiz") : "") + `</div>`;
+          (lang ? `<div class="mehrHinweis">Ganze Notiz lesen ›</div>` : "") + `</div>`;
       }).join("") + `</div>`;
   }
 
@@ -349,6 +405,56 @@
     wireDetail(c);
   }
 
+  /*
+   * Klicks auf Notizen und Nachrichten öffnen die Leseansicht.
+   *
+   * Einmalig auf dem Detailbereich, nicht je Zeile und nicht bei jedem
+   * Neuzeichnen: detailEl bleibt bestehen, nur sein Inhalt wird ersetzt. Wer
+   * hier bei jeder Auswahl erneut anhängt, sammelt Zuhörer an, und ein Klick
+   * öffnet die Ansicht irgendwann mehrfach.
+   */
+  async function leseZeileOeffnen(el) {
+    const c = CASES.find(x => x.id === activeId);
+    if (!c) return;
+    const mailIdx = el.dataset.mail, notizIdx = el.dataset.notiz;
+
+    if (notizIdx !== undefined) {
+      const n = (c.notizen || [])[Number(notizIdx)];
+      if (n) leserAuf({ titel: "Notiz in Pipedrive", sub: n.when, text: n.text });
+      return;
+    }
+    if (mailIdx === undefined) return;
+
+    let m = (c.thread || [])[Number(mailIdx)];
+    if (!m) return;
+    // Liegt kein Rumpf vor, wird er jetzt aus Pipedrive nachgeholt. Der Lauf
+    // lädt ihn nur für die neuesten Nachrichten, um Aufrufe zu sparen.
+    if (!m.full && !m.hatRumpf && !c.volltextGeladen) {
+      leserAuf({ titel: m.who, sub: `${m.tag} · ${m.when}`, text: "Volltext wird aus Pipedrive geladen …" });
+      await volltextSichern(c);
+      m = (c.thread || [])[Number(mailIdx)] || m;
+      if (activeId === c.id) selectCase(c.id, { keepView: true });
+    }
+    leserAuf({
+      titel: m.subject || m.who,
+      sub: `${m.who} · ${m.tag} · ${m.when}`,
+      text: m.full || m.snippet || "",
+      fuss: (!m.full && !m.hatRumpf)
+        ? "Nur der Auszug aus Pipedrive verfügbar — für diese Nachricht liegt kein Volltext vor."
+        : ""
+    });
+  }
+
+  detailEl.addEventListener("click", (e) => {
+    const el = e.target.closest(".oeffnen");
+    if (el) leseZeileOeffnen(el);
+  });
+  detailEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const el = e.target.closest(".oeffnen");
+    if (el) { e.preventDefault(); leseZeileOeffnen(el); }
+  });
+
   function wireDetail(c) {
     const sendBtn = document.getElementById("sendBtn");
     const skipBtn = document.getElementById("skipBtn");
@@ -363,6 +469,10 @@
         c._resolved = "sent";
         c._decidedLocal = Date.now();
         c._resolvedMsg = r.message || `Entwurf an ${c.recipOrg} (${c.recipEmail}) freigegeben.`;
+        // Aus der Antwort übernehmen, sonst zeigt die Ergebniskarte bis zum
+        // nächsten vollständigen Laden „nicht angelegt" an.
+        c.outlookDraft = r.outlook || null;
+        c.notiz = r.notiz || null;
         if (r.outlookLink) {
           // Direkt zum Entwurf springen — dort nur noch prüfen und senden.
           toastLink("ok", "Freigegeben", `${c.token}: ${esc(r.message)}`, r.outlookLink, "In Outlook öffnen");
@@ -479,6 +589,22 @@
     const t = cfg.lastRun ? new Date(cfg.lastRun).toLocaleString("de-DE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }) : "—";
     const s = cfg.lastRunSummary || {};
     el.textContent = `Letzter Lauf ${t} · ${s.drafts || 0} Entwürfe · ${s.skipped || 0} übersprungen`;
+
+    // Nicht jeder fällige Fall kommt durch: Bricht ein Abruf ab — meist, weil
+    // das Tageskontingent der Pipedrive-Schnittstelle erschöpft ist —, fehlt
+    // der Fall in der Liste. Vorher stand das nur in den Serverprotokollen,
+    // und die Zusammenfassung sah aus, als wäre alles erledigt.
+    const faellig = Number(s.dueTasks || 0);
+    const bearbeitet = Number(s.analyzed || 0);
+    const fehlend = Math.max(0, faellig - bearbeitet);
+    const el2 = document.getElementById("runWarn");
+    if (!el2) return;
+    if (!fehlend) { el2.hidden = true; return; }
+    el2.hidden = false;
+    el2.textContent = `⚠ ${fehlend} von ${faellig} fälligen Fällen nicht abgerufen`
+      + ((s.errors && s.errors[0]) ? ` — ${s.errors[0]}` : "")
+      + `. Mit ⟳ erneut versuchen.`;
+    el2.title = (s.errors || []).join("\n");
   }
 
   async function init() {

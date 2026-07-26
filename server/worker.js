@@ -36,6 +36,46 @@ function notesForAi(notes) {
     .slice(0, 8);
 }
 
+/*
+ * Notizen und Mailverlauf für die Anzeige aufbereiten.
+ *
+ * Bewusst hier und nicht doppelt: Der Lauf erzeugt diese Felder, und das
+ * Nachladen im Cockpit (/api/cases/:id/volltext) muss dieselbe Form liefern —
+ * sonst sieht ein nachgeladener Fall anders aus als ein frisch gelaufener.
+ */
+const KURZ_LAENGE = 260;
+const VOLL_LAENGE = 20000;
+
+function notizenFuerAnsicht(notes) {
+  return notesForAi(notes).slice(0, 6).map(n => ({
+    when: fmtDE(n.date),
+    text: n.text.slice(0, VOLL_LAENGE)
+  }));
+}
+
+function threadFuerAnsicht(mails) {
+  return (mails || []).slice(0, 6).map(m => {
+    const voll = (m.body || m.snippet || "").replace(/[ \t]+/g, " ").trim().slice(0, VOLL_LAENGE);
+    const kurz = voll.replace(/\s+/g, " ").slice(0, KURZ_LAENGE);
+    return {
+      id: m.id,
+      dir: m.outgoing ? "out" : "in",
+      who: m.outgoing ? "Büro Gollenstede" : ((m.from[0] && (m.from[0].name || m.from[0].email)) || "Gegenseite"),
+      tag: m.outgoing ? "Gesendet" : "Eingang",
+      when: fmtDE(m.time),
+      subject: m.subject || "",
+      snippet: kurz,
+      // Nur mitschicken, wenn es tatsächlich mehr zu sehen gibt — sonst
+      // bläht sich die Warteschlange mit Dubletten auf.
+      full: voll.length > kurz.length ? voll : null,
+      // Ob überhaupt ein Volltext vorliegt. Der Lauf lädt den Rumpf nur für die
+      // neuesten Nachrichten; bei den übrigen steht hier false, und das Cockpit
+      // weiß, dass Nachladen etwas bringt.
+      hatRumpf: Boolean(m.body)
+    };
+  });
+}
+
 async function mapLimited(items, limit, fn) {
   const out = [];
   let i = 0;
@@ -294,25 +334,8 @@ async function runOnce({ today = new Date(), force = false } = {}) {
         subject: draft ? draft.subject : null,
         draft: draft ? draft.body : null,
         mailError: mailRes.ok ? null : mailRes.error,
-        thread: mails.slice(0, 6).map(m => {
-          const voll = (m.body || m.snippet || "").replace(/[ \t]+/g, " ").trim().slice(0, 3000);
-          const kurz = voll.replace(/\s+/g, " ").slice(0, 260);
-          return {
-            dir: m.outgoing ? "out" : "in",
-            who: m.outgoing ? "Büro Gollenstede" : ((m.from[0] && (m.from[0].name || m.from[0].email)) || "Gegenseite"),
-            tag: m.outgoing ? "Gesendet" : "Eingang",
-            when: fmtDE(m.time),
-            snippet: kurz,
-            // Nur mitschicken, wenn es tatsächlich mehr zu sehen gibt — sonst
-            // bläht sich die Warteschlange mit Dubletten auf.
-            full: voll.length > kurz.length ? voll : null
-          };
-        }),
-        // Notizen im Volltext, damit im Cockpit nichts abgeschnitten bleibt.
-        notizen: notesForAi(notes).slice(0, 6).map(n => ({
-          when: fmtDE(n.date),
-          text: n.text.slice(0, 3000)
-        })),
+        thread: threadFuerAnsicht(mails),
+        notizen: notizenFuerAnsicht(notes),
         ai: aiInfo,
         lawyerOrgId: facts.lawyerOrgId || null,
         pipedriveUrl: buildDealUrl(task.deal_id),
@@ -544,5 +567,6 @@ function start() {
 
 module.exports = {
   runOnce, start, notizenNachtragen,
+  notizenFuerAnsicht, threadFuerAnsicht,
   isRunning: () => running, getLastError: () => lastError
 };

@@ -162,6 +162,42 @@
   .msg .when { font-size: 11.5px; color: var(--text-faint); font-weight: 400; }
   .msg .snippet { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
 
+  /* Leseansicht: Notizen und Nachrichten in Ruhe und in voller Länge lesen.
+     Der Auszug in der Liste bleibt kurz, damit der Verlauf überschaubar ist;
+     ein Klick öffnet den ganzen Text groß darüber. */
+  .leser { position: fixed; inset: 0; z-index: 60; display: none; }
+  .leser.auf { display: block; }
+  .leser .hintergrund { position: absolute; inset: 0; background: rgba(10,14,20,.62); }
+  .leser .blatt {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    top: max(24px, env(safe-area-inset-top)); bottom: max(24px, env(safe-area-inset-bottom));
+    width: min(860px, calc(100vw - 32px));
+    display: flex; flex-direction: column;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: 14px; box-shadow: 0 24px 64px rgba(10,14,20,.35); overflow: hidden;
+  }
+  .leser .kopf { display: flex; align-items: flex-start; gap: 12px; padding: 15px 18px;
+    border-bottom: 1px solid var(--border); }
+  .leser .kopf h3 { margin: 0; font-size: 16px; font-weight: 650; }
+  .leser .kopf .sub { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; }
+  .leser .zu { margin-left: auto; flex: none; background: none; border: 1px solid var(--border);
+    color: var(--text-muted); border-radius: 8px; font-size: 17px; line-height: 1;
+    width: 34px; height: 34px; cursor: pointer; }
+  .leser .zu:hover { color: var(--text); border-color: var(--border-strong); }
+  .leser .rumpf { padding: 18px; overflow-y: auto; flex: 1;
+    font-size: 15px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .leser .fuss { padding: 10px 18px; border-top: 1px solid var(--border);
+    font-size: 12.5px; color: var(--text-faint); }
+  @media (max-width: 720px) {
+    .leser .blatt { top: 0; bottom: 0; width: 100vw; border-radius: 0; border: 0; }
+    .leser .rumpf { font-size: 16px; padding: 15px; }
+  }
+
+  /* Anklickbare Zeilen in Notizen und Mailverlauf. */
+  .oeffnen { cursor: pointer; }
+  .oeffnen:hover { background: var(--surface-2); }
+  .mehrHinweis { font-size: 12px; font-weight: 600; color: var(--accent); margin-top: 5px; }
+
   /* Aufklappbarer Volltext: Notizen und Mails sind in der Übersicht gekürzt,
      lassen sich aber vollständig ansehen, ohne nach Pipedrive zu wechseln. */
   .mehr { margin-top: 5px; }
@@ -381,6 +417,8 @@
         <span class="title">Sachstände</span>
         <span id="kpisCompact"></span>
         <span id="runInfo" style="font-size:11px;color:var(--text-faint);"></span>
+        <span id="runWarn" hidden style="font-size:11.5px;font-weight:600;color:var(--warn);
+          background:var(--warn-soft);border-radius:8px;padding:6px 9px;line-height:1.4;"></span>
         <div class="filters" id="filters">
           <button data-f="offen" class="active">Zu prüfen</button>
           <button data-f="ueberfaellig">Überfällig</button>
@@ -399,6 +437,22 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
+
+<!-- Leseansicht für Notizen und Nachrichten in voller Länge -->
+<div class="leser" id="leser" role="dialog" aria-modal="true" aria-labelledby="leserTitel">
+  <div class="hintergrund" data-zu="1"></div>
+  <div class="blatt">
+    <div class="kopf">
+      <div style="min-width:0">
+        <h3 id="leserTitel"></h3>
+        <div class="sub" id="leserSub"></div>
+      </div>
+      <button class="zu" id="leserZu" data-zu="1" aria-label="Schließen">✕</button>
+    </div>
+    <div class="rumpf" id="leserRumpf" tabindex="0"></div>
+    <div class="fuss" id="leserFuss"></div>
+  </div>
+</div>
 
 <script src="/app.js"></script>
 </body>

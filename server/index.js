@@ -304,10 +304,74 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
         + ` Sie wird beim nächsten Lauf nachgetragen — am Entwurf ändert das nichts.`;
     }
 
+    // Beides mitschicken, nicht nur den Link: Das Cockpit zeichnet die
+    // Ergebniskarte sofort neu und hatte diese Werte sonst erst nach dem
+    // nächsten vollständigen Laden — bis dahin stand dort „nicht angelegt",
+    // obwohl der Entwurf längst im Postfach lag.
     res.json({
       ok: true, message, sent: false,
       outlookLink: outlook && outlook.webLink ? outlook.webLink : null,
+      outlook: outlook && outlook.id
+        ? { id: outlook.id, webLink: outlook.webLink, postfach: outlook.postfach || null }
+        : null,
+      notiz: notizFehler ? { ok: false, fehler: notizFehler } : { ok: true },
       hinweis
+    });
+  } catch (err) { next(err); }
+});
+
+/*
+ * Notizen und Mailverlauf im Volltext nachladen.
+ *
+ * Warum überhaupt nötig: Der Lauf holt den Rumpf nur für die vier neuesten
+ * Nachrichten (`withBody` in pipedrive.js) — das war der größte Posten im
+ * Tagesverbrauch der Pipedrive-Schnittstelle. Bei den älteren Nachrichten liegt
+ * deshalb nur Pipedrives kurzer Auszug vor, und im Cockpit gab es nichts
+ * aufzuklappen. Statt bei jedem Lauf alles zu laden, wird hier auf Anforderung
+ * nachgeholt: einmal je Fall, wenn wirklich jemand hineinsehen will.
+ *
+ * Das Ergebnis landet in der Warteschlange, damit es kein zweites Mal kostet.
+ */
+app.post("/api/cases/:id/volltext", async (req, res, next) => {
+  try {
+    const c = findCase(req.params.id);
+    if (!c) return res.status(404).json({ error: "Fall nicht gefunden." });
+    if (DEMO_MODE) return res.json({ notizen: c.notizen || [], thread: c.thread || [], demo: true });
+
+    const [notes, mailRes] = await Promise.all([
+      pd.getNotes(c.dealId, 20),
+      // Rumpf für alle angezeigten Nachrichten. Sie ändern sich nicht mehr,
+      // deshalb bleibt das Ergebnis dauerhaft im Zwischenspeicher.
+      pd.getDealMails(c.dealId, { limit: 6, withBody: 6 })
+    ]);
+
+    const notizen = worker.notizenFuerAnsicht(notes);
+    const thread = worker.threadFuerAnsicht(mailRes.mails || []);
+
+    const state = store.load();
+    const g = state.cases[c.id];
+    if (g) { g.notizen = notizen; g.thread = thread; g.volltextGeladen = new Date().toISOString(); }
+    store.save(state);
+
+    res.json({ notizen, thread, mailFehler: mailRes.ok ? null : mailRes.error });
+  } catch (err) { next(err); }
+});
+
+/*
+ * Ausstehende Freigabe-Notizen einsehen. Rein lokal, kostet keinen Aufruf —
+ * beantwortet die Frage „wartet hier noch etwas darauf, nach Pipedrive
+ * geschrieben zu werden?".
+ */
+app.get("/api/diagnose/notizen", (_req, res, next) => {
+  try {
+    const state = store.load();
+    res.json({
+      offen: state.offeneNotizen.length,
+      notizen: state.offeneNotizen.map(n => ({
+        dealId: n.dealId, token: n.token, seit: n.seit,
+        versuche: n.versuche || 0, naechsterVersuch: n.naechsterVersuch || null,
+        letzterFehler: n.letzterFehler || null
+      }))
     });
   } catch (err) { next(err); }
 });

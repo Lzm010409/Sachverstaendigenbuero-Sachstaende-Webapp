@@ -101,7 +101,15 @@ function mergeCases(state, freshCases) {
     const changed = prev.fingerprint !== fresh.fingerprint;
     if (prev.decision && !changed) {
       // Entschieden und unverändert: Zustand beibehalten, nur Stammdaten aktualisieren.
-      state.cases[fresh.id] = { ...fresh, queuedAt: prev.queuedAt, decision: prev.decision, decidedAt: prev.decidedAt, decisionNote: prev.decisionNote };
+      // outlookDraft und notiz müssen ausdrücklich mitgenommen werden — sie
+      // stehen nicht in `fresh`, und ohne sie verlöre die Ergebniskarte nach
+      // dem nächsten Lauf den Link zum Entwurf und den Zustand der Notiz.
+      state.cases[fresh.id] = {
+        ...fresh, queuedAt: prev.queuedAt,
+        decision: prev.decision, decidedAt: prev.decidedAt, decisionNote: prev.decisionNote,
+        outlookDraft: prev.outlookDraft || null, notiz: prev.notiz || null,
+        editedBody: prev.editedBody || null
+      };
     } else if (prev.decision && changed) {
       // Neue Korrespondenz nach einer Entscheidung → erneut vorlegen.
       state.cases[fresh.id] = {

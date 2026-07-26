@@ -226,13 +226,15 @@
       `<span class="chip ${c.status}">${STATUS_LABEL[c.status]}</span>` +
       `<span style="margin-left:auto" class="date mono">${esc(c.token)}</span></div>` +
       `<div class="meta-grid">${metaCells(c)}</div></div>` +
+      `<div class="ctx">` +
       `<div class="callout ${co}"><div class="ic">${coIc}</div><div>` +
       `<div class="t">${esc(cTitle)}</div><div class="b">${esc(cBody)}</div></div></div>` +
       aiBlock +
       `<div class="card"><div class="card-head"><span class="h">Mailverlauf</span>` +
       `<span class="badge">${(c.thread || []).length} Nachricht${(c.thread || []).length === 1 ? "" : "en"}</span></div>` +
       threadHtml(c) + `</div>` +
-      draftSection +
+      `</div>` +                       /* .ctx zu */
+      `<div class="draftCol">` + draftSection + `</div>` +
       `</div>`;
 
     wireDetail(c);

@@ -100,7 +100,26 @@
   .chip.sent { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
 
   .detail { overflow-y: auto; min-height: 0; padding: 22px 26px 40px; }
-  .detail-inner { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+  /* Detailansicht als Raster: der Kopf spannt über die ganze Breite, darunter
+     stehen Kontext und Entwurf. Schmale Fenster stapeln, breite stellen sie
+     nebeneinander — so bleibt der Entwurf beim Lesen der Korrespondenz im Blick. */
+  .detail-inner {
+    max-width: 1320px; margin: 0 auto;
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start;
+  }
+  .detail-inner > .dhead { grid-column: 1 / -1; }
+  .ctx, .draftCol { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+
+  /* Ab dieser Breite lohnt die Zweiteilung. Der Entwurf bekommt eine feste,
+     angenehme Textbreite, der Kontext den Rest. */
+  @media (min-width: 1180px) {
+    /* Kontext etwas breiter als der Entwurf — dort steht der Mailverlauf,
+       der die längeren Zeilen hat. Beide Spalten skalieren mit dem Fenster. */
+    .detail-inner { grid-template-columns: minmax(0, 1.15fr) minmax(380px, 1fr); }
+    /* Entwurf bleibt beim Scrollen des Kontexts sichtbar. */
+    .draftCol { position: sticky; top: 0; }
+    .draftCol textarea.editor { min-height: 320px; }
+  }
   .dhead { display: flex; flex-direction: column; gap: 9px; }
   .dhead .toprow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .dhead h2 { margin: 0; font-size: 21px; letter-spacing: -.3px; font-weight: 680; text-wrap: balance; }
@@ -252,7 +271,9 @@
     .case .recip { font-size: 12.5px; white-space: normal; }
 
     .detail { padding: 14px 14px 0; }
-    .detail-inner { gap: 15px; padding-bottom: 16px; }
+    .detail-inner { gap: 15px; padding-bottom: 16px; grid-template-columns: minmax(0, 1fr); max-width: none; }
+    .ctx, .draftCol { gap: 15px; }
+    .draftCol { position: static; }
     .dhead h2 { font-size: 19px; }
     .dhead .toprow .date { display: inline; }
     .meta-grid { grid-template-columns: 1fr 1fr; }   /* nie schmaler als halb */

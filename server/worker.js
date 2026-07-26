@@ -64,6 +64,12 @@ async function runOnce({ today = new Date() } = {}) {
 
     const selected = tasks.slice(0, MAX_CASES);
 
+    // Bereits bekannte Fälle nach Aktenzeichen, um unveränderte Entwürfe
+    // wiederzuverwenden (siehe Kostenbremse weiter unten).
+    const priorByToken = new Map(
+      store.listCases(store.load()).filter(c => c.token).map(c => [c.token, c])
+    );
+
     const results = await mapLimited(selected, CONCURRENCY, async (task) => {
       const [deal, notes, mailRes] = await Promise.all([
         pd.getDeal(task.deal_id),
@@ -97,7 +103,20 @@ async function runOnce({ today = new Date() } = {}) {
           mails
         });
 
-        if (ai.hasKey()) {
+        // Kostenbremse: Der Lauf wiederholt sich alle POLL_MINUTES. Hat sich am Fall
+        // nichts geändert (gleicher Fingerprint) und liegt bereits ein geprüfter
+        // KI-Entwurf vor, wird er wiederverwendet statt neu erzeugt. Ohne das würde
+        // jeder Lauf für jeden Fall erneut beim Modell anfragen.
+        const prior = priorByToken.get(token);
+        const reusable = prior
+          && prior.fingerprint === fingerprint
+          && prior.ai && prior.ai.used
+          && prior.draft
+          && !prior.decision;
+        if (reusable) {
+          draft = { ...draft, body: prior.draft };
+          aiInfo = { ...prior.ai, reused: true };
+        } else if (ai.hasKey()) {
           const factSet = {
             claimant: analysis.claimant, token,
             insurer: analysis.insurer, schadenNr: facts.schadenNr, vertragNr: facts.vertragNr,

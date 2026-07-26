@@ -134,7 +134,11 @@ async function generateDraft({ facts, analysis, notes, mails, instruction, previ
     body: JSON.stringify({
       model: MODEL,
       max_tokens: 2000,
-      system: systemPrompt(),
+      // Der Systemprompt ist über alle Fälle hinweg byte-identisch. Als
+      // Cache-Block markiert kostet er ab dem zweiten Fall im Lauf nur noch
+      // ein Zehntel. Der fallspezifische Kontext steht danach und bleibt
+      // ungecacht — genau die richtige Reihenfolge.
+      system: [{ type: "text", text: systemPrompt(), cache_control: { type: "ephemeral" } }],
       tools: [SCHEMA],
       tool_choice: { type: "tool", name: "sachstandsentwurf" },
       messages: [{ role: "user", content: userParts.join("\n") }]

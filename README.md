@@ -1,5 +1,8 @@
 # Sachstands-Cockpit
 
+> **Anleitung für den Alltag: [BENUTZUNG.md](BENUTZUNG.md)** — Arbeitsablauf,
+> Fristregeln, Kosten, Einrichtung der Anmeldung und Fehlersuche.
+
 Eine kleine Web-App zur Vorbereitung, Freigabe und (perspektivisch) zum Versand von
 **Sachstandsanfragen** an Rechtsanwälte und Versicherungen — für das
 Kfz-Sachverständigenbüro Gollenstede.

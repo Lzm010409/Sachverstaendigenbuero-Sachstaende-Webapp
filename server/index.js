@@ -35,9 +35,20 @@ const PORT = process.env.PORT || 3000;
 const DEMO_MODE = String(process.env.DEMO_MODE || "").toLowerCase() === "true" || !pd.hasToken();
 
 // --- Zugangsschutz --------------------------------------------------------
+// Vorrang hat die Anmeldung über Microsoft Entra ID. Ist sie nicht
+// konfiguriert, greift Basic-Auth als Notausgang — damit die Anwendung nie
+// unbeabsichtigt offen im Netz steht, aber auch nicht aussperrt.
+const auth = require("./auth");
 const AUTH_USER = process.env.BASIC_AUTH_USER;
 const AUTH_PASS = process.env.BASIC_AUTH_PASS;
-if (AUTH_USER && AUTH_PASS) {
+
+if (auth.isConfigured()) {
+  app.use(auth.install(app));
+  console.log("Zugangsschutz: Microsoft Entra ID");
+} else if (AUTH_USER && AUTH_PASS) {
+  // Anmeldeseite trotzdem erreichbar machen, damit der Hinweis auf die
+  // fehlende Entra-Konfiguration sichtbar ist.
+  auth.install(app);
   app.use((req, res, next) => {
     if (req.path === "/api/health") return next();
     const [scheme, encoded] = (req.headers.authorization || "").split(" ");
@@ -48,6 +59,9 @@ if (AUTH_USER && AUTH_PASS) {
     res.set("WWW-Authenticate", 'Basic realm="Sachstands-Cockpit"');
     return res.status(401).send("Anmeldung erforderlich.");
   });
+  console.log("Zugangsschutz: Basic-Auth (Entra nicht konfiguriert)");
+} else {
+  console.warn("WARNUNG: Kein Zugangsschutz aktiv — weder Entra noch Basic-Auth konfiguriert.");
 }
 
 // --- Fälle laden ----------------------------------------------------------
@@ -77,11 +91,14 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, mode: DEMO_MODE ? "demo" : "live", time: new Date().toISOString() });
 });
 
-app.get("/api/config", (_req, res) => {
+app.get("/api/config", (req, res) => {
   const state = DEMO_MODE ? null : store.load();
+  const sitzung = auth.readSession(req);
   res.json({
     demoMode: DEMO_MODE,
-    authEnabled: Boolean(AUTH_USER && AUTH_PASS),
+    authEnabled: Boolean(AUTH_USER && AUTH_PASS) || auth.isConfigured(),
+    entra: auth.isConfigured(),
+    benutzer: sitzung ? { name: sitzung.name, email: sitzung.email } : null,
     pipedrive: pd.hasToken(),
     aiEnabled: Boolean(process.env.ANTHROPIC_API_KEY),
     lastRun: state ? state.lastRun : null,

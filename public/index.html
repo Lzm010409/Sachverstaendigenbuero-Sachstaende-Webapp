@@ -228,6 +228,7 @@
     .brand .mark { width: 30px; height: 30px; min-width: 30px; font-size: 12px; border-radius: 7px; }
     .brand h1 { font-size: 14px; white-space: nowrap; }
     .appbar .date { display: none; }
+    #userBtn { padding: 0 9px !important; font-size: 12px; }
     .badge-demo { display: none; }
 
     /* Die Kennzahlen-Pillen passen auf 393 px nicht in die Kopfzeile und
@@ -330,6 +331,8 @@
     <span class="badge-demo" id="demoBadge" hidden>Demo-Daten</span>
     <button class="theme-toggle" id="refreshBtn" title="Jetzt neu aus Pipedrive laden" aria-label="Aktualisieren" style="width:auto;padding:0 12px;">⟳</button>
     <span class="date" id="today"></span>
+    <a class="theme-toggle" id="userBtn" href="/auth/logout" title="Abmelden"
+       style="width:auto;padding:0 11px;text-decoration:none;display:none;align-items:center;"></a>
     <button class="theme-toggle" id="themeBtn" title="Hell/Dunkel umschalten" aria-label="Theme umschalten">◐</button>
   </header>
 

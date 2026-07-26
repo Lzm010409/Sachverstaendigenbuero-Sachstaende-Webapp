@@ -55,6 +55,11 @@
 
   async function api(path, opts) {
     const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
+    if (res.status === 401) {
+      // Sitzung abgelaufen — zur Anmeldung, sonst laufen alle weiteren Aufrufe ins Leere.
+      window.location.href = "/login";
+      throw new Error("Sitzung abgelaufen, Weiterleitung zur Anmeldung.");
+    }
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ("HTTP " + res.status));
     return res.json();
   }

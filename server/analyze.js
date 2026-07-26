@@ -131,6 +131,20 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
   const lastOwnMail = outgoing.find(m => /sachstand/i.test(m.subject)) || outgoing[0] || null;
   const lastOwnRequest = lastOwnMail ? lastOwnMail.time : null;
 
+  // Für die Wiedervorlage-Frist zählt NUR eine echte Sachstandsanfrage:
+  // eine ausgehende Mail mit „Sachstand" im Betreff oder eine Freigabe-Notiz
+  // am Deal. Der Gutachtenversand ist keine Nachfrage und darf die nächste
+  // nicht unterdrücken.
+  const ownSachstandMail = outgoing.find(m => /sachstand/i.test(m.subject)) || null;
+  const freigabeNotiz = (notes || [])
+    .filter(n => RE_FREIGABE_NOTIZ.test(stripTags(n.content)))
+    .sort((a, b) => String(b.add_time).localeCompare(String(a.add_time)))[0] || null;
+  const lastRequestCandidates = [
+    ownSachstandMail && { date: ownSachstandMail.time, label: `Mail vom ${fmtDE(ownSachstandMail.time)}` },
+    freigabeNotiz && { date: freigabeNotiz.add_time, label: `Freigabe vom ${fmtDE(freigabeNotiz.add_time)}` }
+  ].filter(Boolean).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const lastRequest = lastRequestCandidates[0] || null;
+
   // --- Letzte inhaltliche Aussage der Gegenseite --------------------------
   // Mails UND Notizen berücksichtigen — die eigenen Aktennotizen enthalten oft
   // den aktuelleren Stand ("wie letztes Mal, abwarten").
@@ -233,28 +247,33 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
     }
   }
 
-  // 4a) Dedup über die Freigabe-Notiz am Deal (überlebt Neustarts).
-  if (!skipReason) {
-    const freigabe = (notes || [])
-      .filter(n => RE_FREIGABE_NOTIZ.test(stripTags(n.content)))
-      .sort((a, b) => String(b.add_time).localeCompare(String(a.add_time)))[0];
-    if (freigabe && (daysBetween(task.due_date, freigabe.add_time) || 0) >= 0) {
+  // 4a) WIEDERVORLAGE-FRIST — die eigentliche Doppel-Sperre.
+  //
+  // Maßgeblich ist das ALTER unserer letzten Sachstandsanfrage, nicht das
+  // Fälligkeitsdatum der Aufgabe. Am Fälligkeitsdatum aufgehängt war die Regel
+  // in beide Richtungen falsch: eine Anfrage kurz VOR dem Termin unterdrückte
+  // nichts (neuer Entwurf nach wenigen Tagen), eine Anfrage kurz NACH einem
+  // alten Termin unterdrückte dauerhaft (der Fall kam nie wieder).
+  //
+  // Als Anfrage zählt nur eine ausgehende Mail mit „Sachstand" im Betreff oder
+  // eine Freigabe-Notiz am Deal — Letztere überlebt Neustarts und ist damit die
+  // verlässliche Quelle, auch wenn die lokale Warteschlange verloren geht.
+  if (!skipReason && lastRequest) {
+    const age = daysBetween(lastRequest.date, todayISO);
+    const frist = isCourtCase ? gerichtDays : waitDays;
+    if (age !== null && age < frist) {
+      const restTage = frist - age;
+      const naechste = new Date(Date.parse(lastRequest.date) + frist * 86400000);
       status = "bereits_angefragt";
       calloutType = "ok";
-      calloutTitle = "Bereits freigegeben";
-      calloutBody = `Am ${fmtDE(freigabe.add_time)} wurde bereits eine Sachstandsanfrage freigegeben (Notiz am Deal).`;
-      skipReason = `bereits freigegeben am ${fmtDE(freigabe.add_time)}`;
+      calloutTitle = "Frist läuft noch";
+      calloutBody = `Unsere letzte Sachstandsanfrage: ${lastRequest.label} — vor ${age} von ${frist} Tagen. `
+        + `Nächste Nachfrage ab ${fmtDE(naechste.toISOString())} (in ${restTage} Tagen).`;
+      skipReason = `Frist läuft (${lastRequest.label}, vor ${age} von ${frist} Tagen)`;
     }
   }
 
   // 4b) Dedup: haben wir nach dem Fälligkeitsdatum schon per Mail angefragt?
-  if (!skipReason && lastOwnRequest && daysBetween(task.due_date, lastOwnRequest) >= 0) {
-    status = "bereits_angefragt";
-    calloutType = "ok";
-    calloutTitle = "Bereits angefragt";
-    calloutBody = `Unsere Sachstandsanfrage vom ${fmtDE(lastOwnRequest)} liegt nach dem Fälligkeitsdatum — keine erneute Anfrage.`;
-    skipReason = `bereits angefragt am ${fmtDE(lastOwnRequest)}`;
-  }
 
   // 5) Empfänger unklar
   if (!skipReason && (!recipient || !recipient.email)) {

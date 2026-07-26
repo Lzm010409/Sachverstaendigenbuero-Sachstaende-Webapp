@@ -24,17 +24,58 @@ function emptyState() {
 }
 
 function load() {
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(FILE, "utf8"));
+    raw = JSON.parse(fs.readFileSync(FILE, "utf8"));
   } catch {
     return emptyState();
   }
+  return normalize(raw);
+}
+
+/**
+ * Bringt einen gelesenen Zustand in die erwartete Form.
+ *
+ * Hintergrund: `cases` MUSS ein einfaches Objekt sein. Lag dort ein Array,
+ * legte mergeCases die Fälle als benannte Eigenschaften darauf ab — im
+ * laufenden Prozess sah alles richtig aus, aber JSON.stringify verwirft solche
+ * Eigenschaften. Ergebnis: Die Lauf-Zusammenfassung meldete Entwürfe, die
+ * gespeicherte Liste blieb leer, und niemand bekam eine Fehlermeldung.
+ * Deshalb wird die Form hier einmal geradegezogen statt blind vertraut.
+ */
+function normalize(raw) {
+  const state = Object.assign(emptyState(), raw && typeof raw === "object" ? raw : {});
+  const c = state.cases;
+  const istEinfachesObjekt = c && typeof c === "object" && !Array.isArray(c);
+  if (!istEinfachesObjekt) {
+    const gerettet = {};
+    // Aus einem Array lassen sich die Einträge mit id noch übernehmen.
+    if (Array.isArray(c)) {
+      for (const fall of c) if (fall && fall.id) gerettet[fall.id] = fall;
+    }
+    console.warn(`[store] Feld "cases" hatte die Form ${Array.isArray(c) ? "Array" : typeof c}`
+      + ` statt Objekt und wurde repariert (${Object.keys(gerettet).length} Fälle übernommen).`);
+    state.cases = gerettet;
+  }
+  return state;
 }
 
 function save(state) {
   ensureDir();
+  // Sicherung gegen stillen Datenverlust: Nach dem Serialisieren muss die
+  // Anzahl der Fälle noch stimmen. Weicht sie ab, ist die Form des Zustands
+  // kaputt — dann soll es im Log stehen und nicht unbemerkt bleiben.
+  const erwartet = state.cases && typeof state.cases === "object" ? Object.keys(state.cases).length : 0;
+  const json = JSON.stringify(state, null, 2);
+  const tatsaechlich = Object.keys(JSON.parse(json).cases || {}).length;
+  if (tatsaechlich !== erwartet) {
+    console.error(`[store] FEHLER: ${erwartet} Fälle im Speicher, aber nur ${tatsaechlich}`
+      + ` im JSON. Der Zustand wird repariert und erneut gespeichert.`);
+    state.cases = Object.assign({}, state.cases);   // Array → einfaches Objekt
+    return save(state);
+  }
   const tmp = FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+  fs.writeFileSync(tmp, json);
   fs.renameSync(tmp, FILE); // atomar — kein halb geschriebener Zustand
   return state;
 }

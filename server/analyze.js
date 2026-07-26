@@ -11,7 +11,10 @@
 const TOKEN_RE = /(\d{4}\/\d{3,4}TG)/;
 
 // Signalwörter. Reihenfolge = Priorität: erledigt > abwarten > Rückfrage.
-const RE_ERLEDIGT = /\b(reguliert|ausgeglichen|vollständig bezahlt|zahlung (?:ist )?(?:angewiesen|erfolgt|veranlasst)|überwiesen|erledigt|abgeschlossen|beglichen|zahlungseingang)\b/i;
+const RE_ERLEDIGT = /\b(reguliert|ausgeglichen|vollständig (?:bezahlt|beglichen)|zahlung (?:ist )?(?:angewiesen|erfolgt|veranlasst)|überwiesen|beglichen|zahlungseingang|vorgang (?:ist )?(?:erledigt|abgeschlossen)|sache (?:ist )?erledigt)\b/i;
+// Begriffe, die eine Zahlung nur vortäuschen: Gerichtskostenvorschuss, Teilzahlungen,
+// Vorschüsse an die Kanzlei. Trifft eines davon im selben Satz zu, gilt es nicht als reguliert.
+const RE_KEINE_REGULIERUNG = /\b(vorschuss|vorschüsse|gerichtskosten|gerichtskostenvorschuss|teilzahlung|teilbetrag|abschlag|akontozahlung|anzahlung|klage)\b/i;
 const RE_ABWARTEN = /\b(abwarten|noch nicht absehbar|dauert\s+(?:\w+\s+){0,2}(?:noch|länger)|gerichtstermin|termin ist angesetzt|verlegung|in prüfung|wird geprüft|prüfung läuft|klage (?:ist )?anhängig|gerichtlich|verfahren läuft|anfangsstadium)\b/i;
 const RE_FRAGE_AN_UNS = /(können sie|könnten sie|bitte (?:senden|übersenden|teilen|mitteilen|um)|benötigen wir|benötige ich|wir bitten um|senden sie|reichen sie|liegt (?:uns|mir) .{0,30}nicht vor|fehlt(?:en)? (?:noch|uns)|rückfrage|\?$)/im;
 const RE_UNSER_ENTWURF = /Sachstandsanfrage \(Entwurf/i;
@@ -168,7 +171,13 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
   if (overdueDays !== null && overdueDays > 0) status = "ueberfaellig";
 
   // 1) Erledigt/reguliert — aus Mail oder Notiz
-  const doneHit = findSignal(RE_ERLEDIGT, sortedMails, humanNotes);
+  // Nur Signale ab Anlage der Aufgabe zählen: Wurde die Aufgabe später erstellt,
+  // war ein früherer "reguliert"-Vermerk bereits bekannt und ist kein Grund,
+  // die Nachfrage zu unterlassen.
+  const signalCutoff = task.add_time || null;
+  const doneHit = findSignal(RE_ERLEDIGT, sortedMails, humanNotes, {
+    notBefore: signalCutoff, exclude: RE_KEINE_REGULIERUNG
+  });
   if (doneHit) {
     status = "reguliert";
     calloutType = "ok";
@@ -195,7 +204,7 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
   // 3) Frisches „abwarten" (Notiz/Mail jünger als ABWARTEN_TAGE)
   const waitDays = Number(process.env.ABWARTEN_TAGE || 45);
   if (!skipReason && status !== "rueckfrage") {
-    const waitHit = findSignal(RE_ABWARTEN, sortedMails, humanNotes);
+    const waitHit = findSignal(RE_ABWARTEN, sortedMails, humanNotes, { notBefore: signalCutoff });
     if (waitHit) {
       const age = daysBetween(waitHit.date, todayISO);
       if (age !== null && age <= waitDays) {
@@ -316,27 +325,50 @@ function stripTags(html) {
   return String(html || "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim();
 }
 
-/** Sucht ein Signal in Mails und Notizen; liefert Quelle, Datum und Zitat. */
-function findSignal(re, mails, notes) {
-  for (const m of mails) {
-    const t = mailText(m);
-    const hit = re.exec(t);
-    if (hit) {
-      return {
-        label: `${m.outgoing ? "Unsere Mail" : "Mail der Gegenseite"} vom ${fmtDE(m.time)}`,
-        date: m.time,
-        quote: quoteAround(t, hit.index)
-      };
-    }
-  }
-  for (const n of notes) {
-    const t = stripTags(n.content);
-    const hit = re.exec(t);
-    if (hit) {
-      return { label: `Notiz vom ${fmtDE(n.add_time)}`, date: n.add_time, quote: quoteAround(t, hit.index) };
-    }
+/**
+ * Sucht ein Signal in Mails UND Notizen und liefert den NEUESTEN Treffer.
+ * @param notBefore  Signale vor diesem Zeitpunkt werden ignoriert (z. B. alles,
+ *                   was älter ist als die Aufgabe selbst — das war beim Anlegen
+ *                   der Aufgabe bereits bekannt).
+ * @param exclude    Regex; trifft sie im gefundenen Satz zu, gilt der Treffer nicht.
+ */
+function findSignal(re, mails, notes, { notBefore = null, exclude = null } = {}) {
+  const entries = [
+    ...(mails || []).map(m => ({
+      date: m.time,
+      text: mailText(m),
+      label: `${m.outgoing ? "Unsere Mail" : "Mail der Gegenseite"} vom ${fmtDE(m.time)}`
+    })),
+    ...(notes || []).map(n => ({
+      date: n.add_time,
+      text: stripTags(n.content),
+      label: `Notiz vom ${fmtDE(n.add_time)}`
+    }))
+  ]
+    .filter(e => e.date && e.text)
+    .filter(e => !notBefore || String(e.date) >= String(notBefore).slice(0, 10))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));   // neueste zuerst
+
+  for (const e of entries) {
+    re.lastIndex = 0;
+    const hit = re.exec(e.text);
+    if (!hit) continue;
+    const sentence = sentenceAround(e.text, hit.index);
+    if (exclude && exclude.test(sentence)) continue;   // z. B. „Vorschuss bezahlt"
+    return { label: e.label, date: e.date, quote: condense(sentence, 150) };
   }
   return null;
+}
+
+/** Der Satz, in dem ein Treffer steht — Grundlage für Zitat und Ausschlussprüfung. */
+function sentenceAround(text, idx) {
+  const s = String(text || "");
+  let start = s.lastIndexOf(".", idx);
+  const nl = s.lastIndexOf("\n", idx);
+  start = Math.max(start, nl, idx - 200);
+  let end = s.indexOf(".", idx);
+  if (end === -1 || end > idx + 220) end = Math.min(s.length, idx + 220);
+  return s.slice(start + 1, end + 1).replace(/\s+/g, " ").trim();
 }
 
 function quoteAround(text, idx, len = 150) {

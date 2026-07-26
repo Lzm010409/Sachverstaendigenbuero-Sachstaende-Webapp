@@ -37,29 +37,38 @@
     return res.json();
   }
 
+  /** Braucht dieser Fall eine Entscheidung von mir? */
+  function isPending(c) {
+    return !c._resolved && Boolean(c.draft);
+  }
+
   function visible(c) {
-    if (c._resolved) return filter === "alle";
-    if (filter === "alle" || filter === "offen") return true;
+    if (filter === "alle") return true;
+    if (filter === "erledigt") return !isPending(c);          // übersprungen + freigegeben
+    if (!isPending(c)) return false;                          // sonst nur Offenes zeigen
     if (filter === "ueberfaellig") return c.status === "ueberfaellig";
     if (filter === "rueckfrage") return c.status === "rueckfrage";
-    return true;
+    return true;                                             // "offen"
   }
 
   function renderKpis() {
-    const open = CASES.filter(c => !c._resolved);
-    const ueber = open.filter(c => c.status === "ueberfaellig").length;
-    const rueck = open.filter(c => c.status === "rueckfrage").length;
+    const pending = CASES.filter(isPending);
+    const ueber = pending.filter(c => c.status === "ueberfaellig").length;
+    const rueck = pending.filter(c => c.status === "rueckfrage").length;
+    const done = CASES.length - pending.length;
     kpisEl.innerHTML =
-      `<div class="kpi"><b>${open.length}</b><span>offen</span></div>` +
+      `<div class="kpi"><b>${pending.length}</b><span>zu prüfen</span></div>` +
       `<div class="kpi crit"><b>${ueber}</b><span>überfällig</span></div>` +
-      `<div class="kpi warn"><b>${rueck}</b><span>Rückfragen</span></div>`;
+      `<div class="kpi warn"><b>${rueck}</b><span>Rückfragen</span></div>` +
+      `<div class="kpi"><b>${done}</b><span>erledigt</span></div>`;
   }
 
   function renderList() {
     listEl.innerHTML = "";
     const shown = CASES.filter(visible);
     if (!shown.length) {
-      listEl.innerHTML = `<div class="empty" style="height:auto;padding:30px 16px;font-size:13px;">Keine Fälle in diesem Filter.</div>`;
+      listEl.innerHTML = `<div class="empty" style="height:auto;padding:30px 16px;font-size:13px;">${
+        filter === "offen" ? "Nichts zu prüfen — alles erledigt. 🎉" : "Keine Fälle in diesem Filter."}</div>`;
       return;
     }
     shown.forEach(c => {
@@ -241,7 +250,7 @@
 
   function afterResolve(c) {
     renderKpis();
-    const next = CASES.find(x => !x._resolved && x.id !== c.id && visible(x));
+    const next = CASES.find(x => x.id !== c.id && isPending(x) && visible(x));
     if (next) selectCase(next.id);
     else { activeId = null; renderList(); detailEl.innerHTML = `<div class="empty">Alle Fälle in diesem Filter bearbeitet. 🎉<br><span style="font-size:12px;">Wechsle den Filter oben oder starte den nächsten Lauf.</span></div>`; }
     renderList();
@@ -301,9 +310,9 @@
       CASES = data.cases || [];
       renderKpis();
       renderList();
-      const first = CASES.find(c => !c._resolved) || CASES[0];
+      const first = CASES.find(isPending) || CASES.find(c => visible(c));
       if (first) selectCase(first.id);
-      else detailEl.innerHTML = `<div class="empty">Keine fälligen Sachstände. 🎉</div>`;
+      else detailEl.innerHTML = `<div class="empty">Nichts zu prüfen. 🎉<br><span style="font-size:12px;">Erledigte Fälle über den Filter „Erledigt".</span></div>`;
     } catch (e) {
       detailEl.innerHTML = `<div class="empty">Fehler beim Laden: ${esc(e.message)}</div>`;
     }

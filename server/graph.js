@@ -65,15 +65,63 @@ async function graph(path, { method = "GET", body } = {}) {
   if (res.status === 204) return null;
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    const msg = (json && json.error && json.error.message) || `HTTP ${res.status}`;
-    // Der häufigste Stolperstein ist die fehlende Zustimmung des Administrators.
-    if (res.status === 403) {
-      throw new Error(`${msg} — fehlt der App-Registrierung die Berechtigung`
-        + ` (Mail.ReadWrite bzw. Mail.Send als Anwendungsberechtigung mit Administrator-Zustimmung)?`);
-    }
-    throw new Error(msg);
+    const fehler = (json && json.error) || {};
+    const msg = fehler.message || `HTTP ${res.status}`;
+    // Status und Fehlercode mitgeben: "Access is denied" allein sagt nicht, ob
+    // die Berechtigung fehlt, eine Zugriffsrichtlinie sperrt oder das Postfach
+    // gar nicht existiert. Erst Code und Status unterscheiden die drei Fälle.
+    const err = new Error(`${msg} [HTTP ${res.status}${fehler.code ? ", " + fehler.code : ""}]`);
+    err.status = res.status;
+    err.code = fehler.code || null;
+    throw err;
   }
   return json;
+}
+
+/**
+ * Prüft die Postfach-Anbindung und benennt die Ursache.
+ *
+ * Sind Berechtigung und Zustimmung im Portal erteilt und es scheitert trotzdem,
+ * bleiben drei Möglichkeiten, die sich von außen nicht unterscheiden lassen.
+ * Hier werden sie auseinandergehalten: existiert das Postfach überhaupt, und
+ * darf die Anwendung darauf zugreifen?
+ */
+async function diagnose() {
+  const ergebnis = { postfach: MAILBOX || null, eingerichtet: isConfigured(), schritte: [] };
+  if (!isConfigured()) { ergebnis.hinweis = missingHint(); return ergebnis; }
+
+  const pruefe = async (name, pfad) => {
+    try {
+      await graph(pfad);
+      ergebnis.schritte.push({ schritt: name, ok: true });
+      return true;
+    } catch (err) {
+      ergebnis.schritte.push({ schritt: name, ok: false, status: err.status || null, code: err.code || null, meldung: err.message });
+      return false;
+    }
+  };
+
+  try { await getToken(); ergebnis.schritte.push({ schritt: "Anmeldung als Anwendung", ok: true }); }
+  catch (err) {
+    ergebnis.schritte.push({ schritt: "Anmeldung als Anwendung", ok: false, meldung: err.message });
+    ergebnis.hinweis = "Mandant, Client-ID oder Secret stimmen nicht.";
+    return ergebnis;
+  }
+
+  const nutzerDa = await pruefe("Benutzer vorhanden", `/users/${encodeURIComponent(MAILBOX)}?$select=id,userPrincipalName,mail`);
+  const postfachDa = await pruefe("Zugriff auf das Postfach", `/users/${encodeURIComponent(MAILBOX)}/mailFolders/drafts?$select=id`);
+
+  if (!nutzerDa) {
+    ergebnis.hinweis = `MS_SENDER_UPN ist auf „${MAILBOX}" gesetzt, aber unter diesem Namen findet`
+      + ` Microsoft 365 kein Konto. Erwartet wird der vollständige Anmeldename (UPN), kein Alias.`;
+  } else if (!postfachDa) {
+    ergebnis.hinweis = `Das Konto „${MAILBOX}" gibt es, aber die Anwendung darf nicht auf sein Postfach zugreifen.`
+      + ` Das spricht für eine Exchange-Zugriffsrichtlinie (Application Access Policy), die dieses Postfach`
+      + ` nicht einschließt — oder für ein Konto ohne Exchange-Postfach.`;
+  } else {
+    ergebnis.hinweis = "Die Postfach-Anbindung funktioniert.";
+  }
+  return ergebnis;
 }
 
 /** Reiner Text zu schlichtem HTML — Absätze bleiben erhalten, sonst nichts. */
@@ -124,4 +172,4 @@ async function sendMail({ to, subject, html, text }) {
   return { ok: true };
 }
 
-module.exports = { isConfigured, missingHint, createDraft, sendMail, textToHtml, MAILBOX };
+module.exports = { isConfigured, missingHint, createDraft, sendMail, textToHtml, diagnose, MAILBOX };

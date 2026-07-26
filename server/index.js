@@ -104,6 +104,14 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+/*
+ * Postfach-Anbindung prüfen. Hinter der Anmeldung, weil die Antwort den
+ * Anmeldenamen des Postfachs enthält.
+ */
+app.get("/api/diagnose/outlook", async (_req, res, next) => {
+  try { res.json(await graph.diagnose()); } catch (err) { next(err); }
+});
+
 app.get("/api/config", (req, res) => {
   const state = DEMO_MODE ? null : store.load();
   const sitzung = auth.readSession(req);

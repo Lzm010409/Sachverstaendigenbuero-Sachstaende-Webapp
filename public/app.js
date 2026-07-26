@@ -29,6 +29,15 @@
     weekday: "short", day: "2-digit", month: "2-digit", year: "numeric"
   });
 
+  const CAT_LABELS = {
+    neu_ohne_reaktion: "Frische Akte", honorarkuerzung_rueckabtretung: "SVK gekürzt / Abtretung",
+    teilzahlung_restbetrag: "Teilzahlung, Rest offen", klage_anhaengig: "Verfahren läuft",
+    quote_strittig: "Quote strittig", akteneinsicht_offen: "Akteneinsicht offen",
+    kanzlei_ausgefallen: "Kanzlei ausgefallen", rueckfrage_offen: "Rückfrage bei uns",
+    mandat_beendet_honorarklaerung: "Honorarklärung Kunde", titulierte_eigenforderung: "Eigene Forderung tituliert"
+  };
+  function catLabel(id) { return CAT_LABELS[id] || id; }
+
   function esc(s) { return (s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
   async function api(path, opts) {
@@ -133,6 +142,23 @@
     const cBody = c.calloutBody || c.lastStatus;
     const coIc = co === "ok" ? "✓" : co === "warn" ? "!" : "»";
 
+    // Einschätzung der KI: Kategorie + Schwerpunkt, damit nachvollziehbar ist,
+    // warum der Text so formuliert ist.
+    let aiBlock = "";
+    if (c.ai && c.ai.used) {
+      aiBlock =
+        `<div class="callout info" style="background:var(--surface-2);"><div class="ic">✎</div><div>` +
+        `<div class="t">Einschätzung${c.ai.kategorie ? " · " + esc(catLabel(c.ai.kategorie)) : ""}</div>` +
+        `<div class="b">${esc(c.ai.einschaetzung || "")}` +
+        (c.ai.schwerpunkt ? `<br><span style="color:var(--text-muted);font-size:12.5px;">Schwerpunkt: ${esc(c.ai.schwerpunkt)}</span>` : "") +
+        (c.ai.anfrageSinnvoll === false ? `<br><b style="color:var(--warn)">Anfrage hier unpassend:</b> ${esc(c.ai.hinweisWennUnpassend || "")}` : "") +
+        `</div></div>`;
+    } else if (c.ai && c.ai.problems && c.ai.problems.length) {
+      aiBlock =
+        `<div class="callout warn"><div class="ic">!</div><div><div class="t">KI-Entwurf verworfen</div>` +
+        `<div class="b">${esc(c.ai.problems.join("; "))} — es wird der geprüfte Standardtext gezeigt.</div></div></div>`;
+    }
+
     let draftSection = "";
     if (c.draft) {
       const toLine = `<div class="draft-to"><span class="lbl">An</span>` +
@@ -179,7 +205,8 @@
       `<div class="meta-grid">${metaCells(c)}</div></div>` +
       `<div class="callout ${co}"><div class="ic">${coIc}</div><div>` +
       `<div class="t">${esc(cTitle)}</div><div class="b">${esc(cBody)}</div></div></div>` +
-      `<div class="card"><div class="card-head"><span class="h">Mailverlauf (Outlook)</span>` +
+      aiBlock +
+      `<div class="card"><div class="card-head"><span class="h">Mailverlauf</span>` +
       `<span class="badge">${(c.thread || []).length} Nachricht${(c.thread || []).length === 1 ? "" : "en"}</span></div>` +
       threadHtml(c) + `</div>` +
       draftSection +

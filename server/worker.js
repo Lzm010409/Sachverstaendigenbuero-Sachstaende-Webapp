@@ -14,6 +14,7 @@ const { analyzeCase, extractToken, fmtDE } = require("./analyze");
 const { buildDraft } = require("./draft");
 const { getDealFacts } = require("./fields");
 const directory = require("./directory");
+const ai = require("./ai");
 const store = require("./store");
 
 const SUBJECT_PREFIX = /^sachstand anfragen/i;
@@ -22,6 +23,17 @@ const CONCURRENCY = Number(process.env.FETCH_CONCURRENCY || 4);
 
 let running = false;
 let lastError = null;
+
+/** Notizen für den KI-Kontext: HTML entfernt, eigene Entwurfs-/Freigabenotizen raus. */
+function notesForAi(notes) {
+  return (notes || [])
+    .map(n => ({
+      date: n.add_time,
+      text: String(n.content || "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim()
+    }))
+    .filter(n => n.text && !/Sachstandsanfrage \(Entwurf|Sachstandsanfrage freigegeben/i.test(n.text))
+    .slice(0, 8);
+}
 
 async function mapLimited(items, limit, fn) {
   const out = [];
@@ -72,7 +84,10 @@ async function runOnce({ today = new Date() } = {}) {
       const token = analysis.token || extractToken(deal && deal.title);
 
       let draft = null;
+      let aiInfo = null;
       if (analysis.needsDraft) {
+        // Immer zuerst den deterministischen Entwurf bauen: er dient als Netz und
+        // liefert die verbindliche Anrede für das Modell.
         draft = buildDraft({
           analysis, token,
           claimant: analysis.claimant,
@@ -81,6 +96,57 @@ async function runOnce({ today = new Date() } = {}) {
           caseNumber: facts.schadenNr || facts.vertragNr,
           mails
         });
+
+        if (ai.hasKey()) {
+          const factSet = {
+            claimant: analysis.claimant, token,
+            insurer: analysis.insurer, schadenNr: facts.schadenNr, vertragNr: facts.vertragNr,
+            kennzeichen: facts.kennzeichen, accidentDate: facts.accidentDate,
+            recipPerson: analysis.recipient && analysis.recipient.person,
+            recipOrg: analysis.recipient && analysis.recipient.org,
+            recipEmail: analysis.recipient && analysis.recipient.email,
+            salutation: draft.body.split("\n")[0],
+            wait: analysis.overdueDays
+          };
+          try {
+            const out = await ai.generateDraft({
+              facts: factSet, analysis,
+              notes: notesForAi(notes),
+              mails: mails.slice(0, 6).map(m => ({
+                date: m.time, dir: m.outgoing ? "AUS" : "EIN", text: m.body || m.snippet
+              }))
+            });
+            const noRequest = require("./rules").NO_REQUEST_IDS.includes(out.kategorie)
+              || out.anfrage_sinnvoll === false;
+            const check = ai.validateDraft(out.entwurf, factSet);
+            if (noRequest) {
+              // Sachlage passt nicht zu einer Sachstandsanfrage (z. B. eigene titulierte
+              // Forderung, Honorarklärung mit dem Kunden). Kein Entwurf, aber der Fall
+              // bleibt sichtbar und wird mit Begründung vorgelegt.
+              aiInfo = {
+                used: true, model: out.model, kategorie: out.kategorie,
+                einschaetzung: out.einschaetzung, schwerpunkt: out.schwerpunkt,
+                anfrageSinnvoll: false,
+                hinweisWennUnpassend: out.grund_wenn_unpassend || "Sachlage passt nicht zu einer Sachstandsanfrage."
+              };
+            } else if (check.ok) {
+              draft = { ...draft, body: out.entwurf };
+              aiInfo = {
+                used: true, model: out.model, kategorie: out.kategorie,
+                einschaetzung: out.einschaetzung, schwerpunkt: out.schwerpunkt,
+                anfrageSinnvoll: out.anfrage_sinnvoll !== false,
+                hinweisWennUnpassend: out.grund_wenn_unpassend || null
+              };
+            } else {
+              // Prüfschritt hat angeschlagen: Baukasten behalten, Grund festhalten.
+              aiInfo = { used: false, model: out.model, problems: check.problems, kategorie: out.kategorie };
+              console.warn(`[ai] Entwurf verworfen (${token}):`, check.problems.join("; "));
+            }
+          } catch (err) {
+            aiInfo = { used: false, error: err.message };
+            console.warn(`[ai] nicht verfügbar (${token}):`, err.message);
+          }
+        }
       }
 
       // Fingerprint: erkennt neue Korrespondenz/Notizen am Fall.
@@ -125,6 +191,7 @@ async function runOnce({ today = new Date() } = {}) {
           when: fmtDE(m.time),
           snippet: (m.snippet || m.body || "").replace(/\s+/g, " ").slice(0, 260)
         })),
+        ai: aiInfo,
         lawyerOrgId: facts.lawyerOrgId || null,
         pipedriveUrl: buildDealUrl(task.deal_id),
         fingerprint,

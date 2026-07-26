@@ -273,8 +273,6 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
     }
   }
 
-  // 4b) Dedup: haben wir nach dem Fälligkeitsdatum schon per Mail angefragt?
-
   // 5) Empfänger unklar
   if (!skipReason && (!recipient || !recipient.email)) {
     status = "unklar";

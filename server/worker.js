@@ -50,6 +50,46 @@ async function mapLimited(items, limit, fn) {
   return out;
 }
 
+/**
+ * Freigabe-Notizen nachtragen, die Pipedrive bei der Freigabe abgelehnt hat
+ * (praktisch immer: Tageskontingent aufgebraucht).
+ *
+ * Diese Notiz ist die dauerhafte Spur einer Anfrage — analyze.js liest sie, um
+ * die Wiedervorlage-Frist zu bestimmen. Fehlt sie, könnte derselbe Fall erneut
+ * angefragt werden. Läuft am Anfang jedes Laufs, also auch dann, wenn das
+ * Kontingent am Folgetag wieder frisch ist.
+ *
+ * Nach VERSUCHE_MAX Anläufen wird aufgegeben, damit eine dauerhaft unmögliche
+ * Notiz (gelöschter Deal) nicht endlos Kontingent verbraucht.
+ */
+const VERSUCHE_MAX = 5;
+async function notizenNachtragen() {
+  const state = store.load();
+  if (!state.offeneNotizen.length) return;
+  const offen = state.offeneNotizen;
+  const bleibt = [];
+  let erledigt = 0;
+  for (const n of offen) {
+    try {
+      await pd.addNote(n.dealId, n.content);
+      erledigt++;
+    } catch (err) {
+      n.versuche = (n.versuche || 0) + 1;
+      n.letzterFehler = err.message;
+      if (n.versuche < VERSUCHE_MAX) bleibt.push(n);
+      else console.error(`[worker] Notiz für Deal ${n.dealId} nach ${n.versuche} Versuchen aufgegeben:`, err.message);
+      // Beim ersten Fehlschlag abbrechen: Ist das Kontingent aufgebraucht,
+      // scheitern auch alle weiteren und verbrennen nur Aufrufe.
+      const rest = offen.slice(offen.indexOf(n) + 1);
+      bleibt.push(...rest);
+      break;
+    }
+  }
+  state.offeneNotizen = bleibt;
+  store.save(state);
+  if (erledigt) console.log(`[worker] ${erledigt} vorgemerkte Notiz(en) nachgetragen, ${bleibt.length} offen.`);
+}
+
 /** Ein Durchlauf: fällige Tasks → Analyse → Entwürfe → Warteschlange. */
 /**
  * Ein Lauf.
@@ -62,6 +102,7 @@ async function runOnce({ today = new Date(), force = false } = {}) {
   running = true;
   const startedAt = new Date().toISOString();
   try {
+    await notizenNachtragen();
     const todayISO = today.toISOString().slice(0, 10);
     const tasks = (await pd.getOpenTasks())
       .filter(t => t.type === "task" && SUBJECT_PREFIX.test(String(t.subject || "")))
@@ -231,12 +272,24 @@ async function runOnce({ today = new Date(), force = false } = {}) {
         subject: draft ? draft.subject : null,
         draft: draft ? draft.body : null,
         mailError: mailRes.ok ? null : mailRes.error,
-        thread: mails.slice(0, 6).map(m => ({
-          dir: m.outgoing ? "out" : "in",
-          who: m.outgoing ? "Büro Gollenstede" : ((m.from[0] && (m.from[0].name || m.from[0].email)) || "Gegenseite"),
-          tag: m.outgoing ? "Gesendet" : "Eingang",
-          when: fmtDE(m.time),
-          snippet: (m.snippet || m.body || "").replace(/\s+/g, " ").slice(0, 260)
+        thread: mails.slice(0, 6).map(m => {
+          const voll = (m.body || m.snippet || "").replace(/[ \t]+/g, " ").trim().slice(0, 3000);
+          const kurz = voll.replace(/\s+/g, " ").slice(0, 260);
+          return {
+            dir: m.outgoing ? "out" : "in",
+            who: m.outgoing ? "Büro Gollenstede" : ((m.from[0] && (m.from[0].name || m.from[0].email)) || "Gegenseite"),
+            tag: m.outgoing ? "Gesendet" : "Eingang",
+            when: fmtDE(m.time),
+            snippet: kurz,
+            // Nur mitschicken, wenn es tatsächlich mehr zu sehen gibt — sonst
+            // bläht sich die Warteschlange mit Dubletten auf.
+            full: voll.length > kurz.length ? voll : null
+          };
+        }),
+        // Notizen im Volltext, damit im Cockpit nichts abgeschnitten bleibt.
+        notizen: notesForAi(notes).slice(0, 6).map(n => ({
+          when: fmtDE(n.date),
+          text: n.text.slice(0, 3000)
         })),
         ai: aiInfo,
         lawyerOrgId: facts.lawyerOrgId || null,

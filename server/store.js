@@ -20,7 +20,9 @@ function ensureDir() {
 }
 
 function emptyState() {
-  return { cases: {}, lastRun: null, lastRunSummary: null, version: 1 };
+  // offeneNotizen: Freigabe-Notizen, die Pipedrive gerade nicht angenommen hat
+  // (typisch: Tageskontingent aufgebraucht). Der nächste Lauf trägt sie nach.
+  return { cases: {}, offeneNotizen: [], lastRun: null, lastRunSummary: null, version: 1 };
 }
 
 function load() {
@@ -57,6 +59,7 @@ function normalize(raw) {
       + ` statt Objekt und wurde repariert (${Object.keys(gerettet).length} Fälle übernommen).`);
     state.cases = gerettet;
   }
+  if (!Array.isArray(state.offeneNotizen)) state.offeneNotizen = [];
   return state;
 }
 

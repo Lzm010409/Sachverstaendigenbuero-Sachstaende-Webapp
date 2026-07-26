@@ -196,10 +196,11 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
     }
 
     const noteHtml = renderApprovalNote(c, body);
-    await pd.addNote(c.dealId, noteHtml);
 
-    // Entwurf ins Postfach legen, damit nichts aus einer Notiz kopiert werden
-    // muss — das erzeugte beim Einfügen schwarze Unterstreichungen.
+    // Reihenfolge ist Absicht: ERST der Entwurf ins Postfach, DANN die Notiz.
+    // Andersherum riss ein Fehler der Pipedrive-Notiz — etwa ein aufgebrauchtes
+    // Tageskontingent — die ganze Freigabe mit, und der Entwurf entstand nie,
+    // obwohl Outlook einwandfrei erreichbar war.
     let outlook = null;
     if (graph.isConfigured() && c.recipEmail) {
       try {
@@ -219,9 +220,37 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
       }
     }
 
+    // Sollte ein Entwurf entstehen und ist er es nicht, wird die Freigabe NICHT
+    // vermerkt. Sonst verschwindet der Fall aus der Liste, ohne dass irgendwo
+    // eine Mail liegt — der Fehler fiele erst auf, wenn niemand mehr nachfragt.
+    if (outlook && outlook.error) {
+      return res.status(502).json({
+        error: `Der Outlook-Entwurf konnte nicht angelegt werden: ${outlook.error}`
+          + ` Die Freigabe wurde nicht vermerkt, der Fall bleibt in der Liste.`
+      });
+    }
+
+    // Freigabe am Deal protokollieren. Diese Notiz ist die dauerhafte Spur der
+    // Anfrage: Kaskadenschritt 4 in analyze.js liest sie, damit nicht doppelt
+    // angefragt wird. Sie ist zu wichtig, um sie fallenzulassen — aber auch zu
+    // unkritisch, um die Freigabe daran scheitern zu lassen. Also vormerken und
+    // beim nächsten Lauf nachtragen.
     const state = store.load();
+    let notizFehler = null;
+    try {
+      await pd.addNote(c.dealId, noteHtml);
+    } catch (err) {
+      notizFehler = err.message;
+      state.offeneNotizen.push({
+        dealId: c.dealId, token: c.token || null, content: noteHtml,
+        seit: new Date().toISOString(), versuche: 1, letzterFehler: err.message
+      });
+      console.warn(`[approve] Notiz am Deal ${c.dealId} vorgemerkt:`, err.message);
+    }
+
     store.setDecision(state, c.id, "approved",
-      `freigegeben, Notiz am Deal ${c.dealId}` + (outlook && outlook.id ? ", Entwurf in Outlook" : ""));
+      (outlook && outlook.id ? "Entwurf in Outlook" : "freigegeben")
+      + (notizFehler ? ", Notiz wird nachgetragen" : `, Notiz am Deal ${c.dealId}`));
     if (outlook && outlook.id) {
       const gespeichert = state.cases[c.id];
       if (gespeichert) gespeichert.outlookDraft = { id: outlook.id, webLink: outlook.webLink };
@@ -232,14 +261,15 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
     let message, hinweis = null;
     if (outlook && outlook.id) {
       message = `Freigegeben. Entwurf liegt in Outlook, Adressat ${wohin}.`;
-    } else if (outlook && outlook.error) {
-      message = `Freigegeben und als Notiz hinterlegt. Outlook-Entwurf schlug fehl.`;
-      hinweis = outlook.error;
     } else if (!graph.isConfigured()) {
       message = `Freigegeben. Entwurf als Notiz am Deal hinterlegt (${wohin}).`;
       hinweis = graph.missingHint();
     } else {
       message = `Freigegeben, aber ohne Empfängeradresse — nur als Notiz am Deal.`;
+    }
+    if (notizFehler) {
+      hinweis = `Pipedrive hat die Notiz gerade nicht angenommen (${notizFehler}).`
+        + ` Sie wird beim nächsten Lauf nachgetragen — am Entwurf ändert das nichts.`;
     }
 
     res.json({

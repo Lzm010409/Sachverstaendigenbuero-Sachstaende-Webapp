@@ -158,6 +158,28 @@
   .msg .when { font-size: 11.5px; color: var(--text-faint); font-weight: 400; }
   .msg .snippet { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
 
+  /* Aufklappbarer Volltext: Notizen und Mails sind in der Übersicht gekürzt,
+     lassen sich aber vollständig ansehen, ohne nach Pipedrive zu wechseln. */
+  .mehr { margin-top: 5px; }
+  .mehr > summary { cursor: pointer; display: inline-block; font-size: 12px; font-weight: 600;
+    color: var(--accent); list-style: none; padding: 3px 0; }
+  .mehr > summary::-webkit-details-marker { display: none; }
+  .mehr > summary::before { content: "▸ "; }
+  .mehr[open] > summary::before { content: "▾ "; }
+  .mehr[open] > summary { margin-bottom: 4px; }
+  .volltext { font-size: 13px; line-height: 1.55; color: var(--text); white-space: pre-wrap;
+    overflow-wrap: anywhere; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; max-height: 420px; overflow-y: auto; }
+  .notiz { padding: 11px 16px; border-bottom: 1px solid var(--border); }
+  .notiz:last-child { border-bottom: 0; }
+  .notiz .when { font-size: 11.5px; color: var(--text-faint); }
+  .notiz .snippet { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
+  /* Ist der Volltext aufgeklappt, verschwindet die gekürzte Fassung darüber —
+     sonst steht derselbe Anfang zweimal untereinander. Kann ein Browser :has()
+     nicht, bleiben beide sichtbar; unschön, aber nichts geht verloren. */
+  .notiz:has(details.mehr[open]) > .snippet,
+  .msg:has(details.mehr[open]) .snippet { display: none; }
+
   .draft-wrap { padding: 4px 16px 16px; }
   .draft-to { display: flex; align-items: center; gap: 8px; padding: 10px 2px; font-size: 13px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .draft-to .lbl { color: var(--text-faint); width: 62px; }

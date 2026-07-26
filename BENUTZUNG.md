@@ -60,7 +60,13 @@ Rechts (am Handy: nach dem Antippen) steht alles zum Fall:
 - **Letzter Stand:** was zuletzt passiert ist, mit Datum und Quelle.
 - **Einschätzung:** die erkannte Fall-Kategorie und worauf die Anfrage den
   Schwerpunkt legt — damit nachvollziehbar ist, warum der Text so formuliert ist.
+- **Notizen in Pipedrive:** die letzten Notizen am Deal. Eigene Entwurfs- und
+  Freigabenotizen sind ausgeblendet.
 - **Mailverlauf:** die letzten Nachrichten, neueste zuerst.
+
+Notizen und Nachrichten stehen gekürzt da. Ist mehr vorhanden, erscheint darunter
+**„Ganze Notiz"** bzw. **„Ganze Nachricht"** — ein Antippen zeigt den vollständigen
+Text, ohne dass du nach Pipedrive wechseln musst.
 - **Anfrage-Entwurf:** Empfänger, Betreff und der Text. **Der Text ist direkt
   bearbeitbar** — tippe hinein und ändere, was du willst.
 
@@ -188,6 +194,13 @@ Beim Freigeben passiert dreierlei:
    die Outlook-Einstellungen erbt; das Kopieren aus einer Notiz mitsamt schwarzer
    Unterstreichung entfällt.
 3. Im Cockpit erscheint ein Link direkt zu diesem Entwurf.
+
+Nimmt Pipedrive die Notiz gerade nicht an — praktisch immer, weil das Tageskontingent
+der Pipedrive-Schnittstelle aufgebraucht ist —, **entsteht der Outlook-Entwurf
+trotzdem**. Die Notiz wird vorgemerkt und beim nächsten Lauf nachgetragen; im Cockpit
+steht ein entsprechender Hinweis. Umgekehrt gilt: Lässt sich der Entwurf *nicht*
+anlegen, wird die Freigabe **nicht** vermerkt und der Fall bleibt in der Liste — sonst
+verschwände er, ohne dass irgendwo eine Mail läge.
 
 **Zuordnung zum richtigen Deal.** Der Betreff trägt Kundenname und Aktenzeichen
 (`Sachstandsanfrage · Nuhi · [Az. 0824/1308TG]`). Das hilft beim Suchen, ordnet die

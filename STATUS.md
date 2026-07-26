@@ -12,14 +12,21 @@ Stand: 2026-07-26
 
 | Punkt | Stand |
 |---|---|
-| App-Code | Fertig, im Repo, Branch `claude/sachstands-anfrage-entwuerfe-8647vg` |
-| Architektur | Node/Express-Einzeldienst: liefert `public/` aus + JSON-API unter `/api/*` |
-| Betrieb | **DEMO_MODE=true** — Beispieldaten aus `server/demo-cases.js`, **es wird nichts versendet** |
+| App-Code | Im Repo, Branch `claude/sachstands-anfrage-entwuerfe-8647vg` |
+| Architektur | Node/Express-Einzeldienst: `public/` + JSON-API `/api/*` + Hintergrundlauf |
+| Betrieb | **LIVE** gegen Pipedrive. Entwürfe entstehen selbsttätig, **versendet wird nur auf Freigabe von Hand** |
+| Lauf | Einmal täglich ab `LAUF_STUNDE` (Vorgabe 7 Uhr), rund 110 Pipedrive-Abrufe |
+| Entwurfstext | Anthropic `claude-sonnet-5` mit deterministischem Baukasten als Netz |
+| Freigabe | Notiz am Deal + **Outlook-Entwurf** (Graph) mit deal-eigener Pipedrive-Dropbox als BCC |
+| Tagesübersicht | Mail an `DIGEST_EMPFAENGER` ab `DIGEST_STUNDE` |
 | Deployment | Coolify, Build Pack = Dockerfile, Port 3000 (intern), Domain via Traefik auf 80/443 |
 | Domain | `https://sachstaende.gollenstede.app` |
-| Zugangsschutz | Basic-Auth (Env `BASIC_AUTH_USER` / `BASIC_AUTH_PASS`), in Coolify gesetzt |
+| Zugangsschutz | **Microsoft Entra ID** (`server/auth.js`); Basic-Auth nur noch als Notausgang |
 
 Lokal starten: `npm install && npm start` → http://localhost:3000
+
+**Wie die Lösung im Einzelnen arbeitet, steht in [ARCHITEKTUR.md](ARCHITEKTUR.md)** —
+Lauf, Entscheidungskaskade, Kostenbremsen, Freigabepfad. Bedienung: [BENUTZUNG.md](BENUTZUNG.md).
 
 ---
 
@@ -63,14 +70,28 @@ curl -s -X POST -H "Authorization: Bearer $COOLIFY_API_TOKEN" \
 
 ```
 server/
-  index.js        Express: statisch + /api/*. Enthält die TODO(live)-Nahtstellen.
-  demo-cases.js   Beispieldaten (Struktur == spätere Live-Antwort)
+  index.js        Express: statisch + /api/*, Freigabepfad
+  worker.js       Hintergrundlauf, Zeitplan, Kostenbremsen, Notiz-Nachtrag
+  analyze.js      Entscheidungskaskade je Fall
+  rules.js        Fall-Kategorien (NO_REQUEST_IDS = keine Anfrage)
+  draft.js        deterministischer Entwurf, Betreff, Anrede
+  ai.js           Anthropic + validateDraft()
+  pipedrive.js    API-Zugriff, Caches, dropboxFuerDeal()
+  fields.js       Deal-Felder über Feldnamen auflösen
+  directory.js    gelernte Mailadressen je Kanzlei
+  graph.js        Outlook-Entwurf + Mailversand
+  digest.js       tägliche Übersicht
+  auth.js         Entra-Anmeldung, signiertes Cookie
+  store.js        Warteschlange (JSON unter DATA_DIR)
+  demo-cases.js   Beispieldaten für DEMO_MODE
 public/
-  index.html      Cockpit-UI (Segoe UI, hell/dunkel, responsiv)
+  index.html      Cockpit-UI (hell/dunkel, mobil + Schreibtisch)
   app.js          Frontend-Logik (fetch gegen /api)
 Dockerfile        node:20-alpine, Healthcheck auf /api/health
 .env.example      alle Env-Variablen dokumentiert
-README.md         Nutzer-/Deploy-Doku
+ARCHITEKTUR.md    wie die Lösung technisch arbeitet
+BENUTZUNG.md      Anleitung für den Anwender
+README.md         Kurzüberblick, Deployment
 STATUS.md         diese Datei
 ```
 
@@ -153,27 +174,24 @@ einer Handvoll). Belegt durch zwei Läufe hintereinander: 3 Aufrufe, dann 0.
 
 ## 4. Nächste Schritte — Demo → Live
 
-Alle Nahtstellen sind in `server/index.js` mit `TODO(live)` markiert. Zu bauen:
+Pipedrive, Anthropic, Graph und die Entra-Anmeldung sind gebaut und im Betrieb
+(siehe ARCHITEKTUR.md). Offen sind nur noch Punkte, die **im Konto des Nutzers**
+erledigt werden müssen:
 
-1. **Pipedrive** (`loadCases`): fällige „Sachstand anfragen"-Tasks
-   (`getActivities`, `type=task`, `subject` beginnt mit „Sachstand anfragen",
-   `due_date <= HEUTE`), je Fall Deal + Notizen laden und in die `demo-cases`-Struktur
-   mappen. Env: `PIPEDRIVE_API_TOKEN`, `PIPEDRIVE_DOMAIN`.
-   Aktenzeichen-Regex: `\d{4}/\d{3,4}TG`.
+1. **Graph-Berechtigungen.** Die App-Registrierung braucht `Mail.ReadWrite` (Entwürfe)
+   und `Mail.Send` (Tagesübersicht) als **Anwendungsberechtigungen** mit
+   Administrator-Zustimmung, dazu `MS_SENDER_UPN`. Empfehlung: `Mail.Send` mit einer
+   Exchange *Application Access Policy* auf genau dieses eine Postfach begrenzen —
+   sonst erlaubt die Berechtigung technisch den Versand aus jedem Postfach.
 
-2. **Microsoft 365 / Graph** — Mailverläufe je Fall lesen (ersetzt den
-   unzuverlässigen n8n-Webhook `pipedrive-deal-mails`) und **Versand**.
-   Lesen deckt der bestehende M365-Connector; **Senden** braucht eine
-   App-Registrierung mit **`Mail.Send`** (Env: `MS_TENANT_ID`, `MS_CLIENT_ID`,
-   `MS_CLIENT_SECRET`, `MS_SENDER_UPN`). Zuordnung Mail↔Fall am robustesten über
-   das Aktenzeichen im Betreff (`… [Az. 2024/0123TG]`); Fallback: Gegenseiten-Mailadresse.
+2. **Volume** anlegen (siehe oben) und **`PIPEDRIVE_BCC_DROPBOX`** setzen.
 
-3. **Anthropic** (`generateDraft`): Entwurf/Umschreiben aus Fall-Kontext.
-   Env: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (Default `claude-sonnet-5`).
+3. **Pipedrive-Kontingent.** Das Tagesbudget ist knapp und war schon aufgebraucht.
+   Der Lauf verbraucht rund 110 Abrufe; der Rest geht für den übrigen Betrieb drauf.
+   Reicht es nicht, ist `FALL_TTL_STUNDEN` die richtige Schraube, nicht `LAUF_STUNDE`.
 
-4. **Zurückschreiben** nach Freigabe (im `approve`-Handler, Reihenfolge):
-   Mail via Graph senden → Pipedrive-Notiz (`addNote`) → Vault-Fallnotiz
-   (Sachstand-Log + Frontmatter) → Pipedrive-Task erst danach als erledigt.
+**Noch nicht angebunden:** die Vault-Fallnotiz (`VAULT_PATH`) — Sachstand-Log und
+Frontmatter im Obsidian-Vault werden nicht geschrieben.
 
 ### Fachregeln (aus dem bestehenden Skill übernehmen)
 - **Anrede:** `Anrede-Regeln.md` im Vault. Duzen: Claudia Busch, Philipp Nadler,

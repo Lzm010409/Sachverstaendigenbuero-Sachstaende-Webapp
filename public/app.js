@@ -157,13 +157,38 @@
     return cells.map(([k, v]) => `<div class="cell"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
   }
 
+  /**
+   * Gekürzter Text plus Aufklapper, wenn es mehr zu lesen gibt.
+   * <details> statt eigener Klick-Logik: funktioniert ohne Verdrahtung, bleibt
+   * beim Neuzeichnen erhalten und lässt sich auf dem Handy bedienen.
+   */
+  function langtext(voll, label) {
+    if (!voll) return "";
+    return `<details class="mehr"><summary>${esc(label)}</summary>` +
+      `<div class="volltext">${esc(voll)}</div></details>`;
+  }
+
   function threadHtml(c) {
     if (!c.thread || !c.thread.length) return `<div class="thread"><div class="msg"><div></div><div class="snippet">Noch keine Korrespondenz im Postfach gefunden.</div></div></div>`;
     return `<div class="thread">` + c.thread.map(m =>
       `<div class="msg ${m.dir}"><div class="rail"><div class="dot"></div></div>` +
       `<div><div class="who">${esc(m.who)}<span class="tag">${esc(m.tag)}</span><span class="when">${esc(m.when)}</span></div>` +
-      `<div class="snippet">${esc(m.snippet)}</div></div></div>`
+      `<div class="snippet">${esc(m.snippet)}</div>` +
+      langtext(m.full, "Ganze Nachricht") + `</div></div>`
     ).join("") + `</div>`;
+  }
+
+  function notizenHtml(c) {
+    const n = c.notizen || [];
+    if (!n.length) return "";
+    return `<div class="card"><div class="card-head"><span class="h">Notizen in Pipedrive</span>` +
+      `<span class="badge">${n.length} Notiz${n.length === 1 ? "" : "en"}</span></div>` +
+      n.map(x => {
+        const kurz = x.text.length > 260 ? x.text.slice(0, 260).trimEnd() + " …" : x.text;
+        return `<div class="notiz"><div class="when">${esc(x.when)}</div>` +
+          `<div class="snippet">${esc(kurz)}</div>` +
+          (x.text.length > 260 ? langtext(x.text, "Ganze Notiz") : "") + `</div>`;
+      }).join("") + `</div>`;
   }
 
   function selectCase(id, opts) {
@@ -253,6 +278,7 @@
       `<div class="callout ${co}"><div class="ic">${coIc}</div><div>` +
       `<div class="t">${esc(cTitle)}</div><div class="b">${esc(cBody)}</div></div></div>` +
       aiBlock +
+      notizenHtml(c) +
       `<div class="card"><div class="card-head"><span class="h">Mailverlauf</span>` +
       `<span class="badge">${(c.thread || []).length} Nachricht${(c.thread || []).length === 1 ? "" : "en"}</span></div>` +
       threadHtml(c) + `</div>` +

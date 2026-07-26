@@ -20,6 +20,14 @@ const TENANT = process.env.MS_TENANT_ID || "";
 const CLIENT_ID = process.env.MS_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.MS_CLIENT_SECRET || "";
 const MAILBOX = process.env.MS_SENDER_UPN || "";
+/*
+ * Entwürfe dürfen in einem anderen Postfach liegen als dem, aus dem versendet
+ * wird — typisch: ein freigegebenes Postfach, in das auch Kolleginnen und
+ * Kollegen sehen. Ein freigegebenes Postfach hat keine Anmeldung, ist mit
+ * einem Anwendungstoken aber über seine SMTP-Adresse ganz normal erreichbar.
+ * Nicht gesetzt = wie bisher, beides im selben Postfach.
+ */
+const ENTWURF_MAILBOX = process.env.MS_ENTWURF_UPN || MAILBOX;
 
 let token = null;   // { value, expiresAt }
 
@@ -87,7 +95,12 @@ async function graph(path, { method = "GET", body } = {}) {
  * darf die Anwendung darauf zugreifen?
  */
 async function diagnose() {
-  const ergebnis = { postfach: MAILBOX || null, eingerichtet: isConfigured(), schritte: [] };
+  const ergebnis = {
+    postfach: MAILBOX || null,
+    entwurfsPostfach: ENTWURF_MAILBOX || null,
+    eingerichtet: isConfigured(),
+    schritte: []
+  };
   if (!isConfigured()) { ergebnis.hinweis = missingHint(); return ergebnis; }
 
   const pruefe = async (name, pfad) => {
@@ -110,10 +123,28 @@ async function diagnose() {
 
   // Maßgeblich ist allein, ob sich der Entwurfsordner öffnen lässt — genau das
   // braucht createDraft. Alles andere ist nur Ursachenforschung, wenn es
-  // scheitert.
-  const postfachDa = await pruefe("Zugriff auf das Postfach", `/users/${encodeURIComponent(MAILBOX)}/mailFolders/drafts?$select=id`);
-  if (postfachDa) {
-    ergebnis.hinweis = "Die Postfach-Anbindung funktioniert.";
+  // scheitert. Sind Versand- und Entwurfspostfach verschieden, müssen BEIDE
+  // erreichbar sein; nur eines zu prüfen hieße, das andere zu übersehen.
+  const geteilt = ENTWURF_MAILBOX && ENTWURF_MAILBOX !== MAILBOX;
+  const versandDa = await pruefe(
+    geteilt ? `Zugriff auf das Versandpostfach (${MAILBOX})` : "Zugriff auf das Postfach",
+    `/users/${encodeURIComponent(MAILBOX)}/mailFolders/drafts?$select=id`);
+  const entwurfDa = geteilt
+    ? await pruefe(`Zugriff auf das Entwurfspostfach (${ENTWURF_MAILBOX})`,
+      `/users/${encodeURIComponent(ENTWURF_MAILBOX)}/mailFolders/drafts?$select=id`)
+    : versandDa;
+
+  if (versandDa && entwurfDa) {
+    ergebnis.hinweis = geteilt
+      ? `Beide Postfächer sind erreichbar: Entwürfe liegen in „${ENTWURF_MAILBOX}", versendet wird aus „${MAILBOX}".`
+      : "Die Postfach-Anbindung funktioniert.";
+    return ergebnis;
+  }
+  if (versandDa && !entwurfDa) {
+    ergebnis.hinweis = `Das Versandpostfach „${MAILBOX}" ist erreichbar, das Entwurfspostfach`
+      + ` „${ENTWURF_MAILBOX}" nicht. Bei einem freigegebenen Postfach ist das fast immer eine`
+      + ` Exchange-Zugriffsrichtlinie (Application Access Policy), die es nicht einschließt —`
+      + ` oder MS_ENTWURF_UPN trägt nicht die primäre SMTP-Adresse des Postfachs.`;
     return ergebnis;
   }
 
@@ -167,8 +198,8 @@ async function createDraft({ to, subject, text, html, bcc }) {
   // allein ordnet Pipedrive nur der Person zu — und eine Kanzlei hängt an
   // vielen Deals gleichzeitig.
   if (bcc) body.bccRecipients = [{ emailAddress: { address: bcc } }];
-  const msg = await graph(`/users/${encodeURIComponent(MAILBOX)}/messages`, { method: "POST", body });
-  return { id: msg.id, webLink: msg.webLink };
+  const msg = await graph(`/users/${encodeURIComponent(ENTWURF_MAILBOX)}/messages`, { method: "POST", body });
+  return { id: msg.id, webLink: msg.webLink, postfach: ENTWURF_MAILBOX };
 }
 
 /** Verschickt eine Mail direkt (für die tägliche Übersicht). */

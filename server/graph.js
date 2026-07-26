@@ -90,17 +90,20 @@ function textToHtml(text) {
  * Legt einen Entwurf im Postfach an.
  * @returns {Promise<{id: string, webLink: string}>}
  */
-async function createDraft({ to, subject, text, html }) {
+async function createDraft({ to, subject, text, html, bcc }) {
   if (!isConfigured()) throw new Error(missingHint());
   if (!to) throw new Error("Kein Empfänger angegeben.");
-  const msg = await graph(`/users/${encodeURIComponent(MAILBOX)}/messages`, {
-    method: "POST",
-    body: {
-      subject: subject || "",
-      body: { contentType: "HTML", content: html || textToHtml(text) },
-      toRecipients: [{ emailAddress: { address: to } }]
-    }
-  });
+  const body = {
+    subject: subject || "",
+    body: { contentType: "HTML", content: html || textToHtml(text) },
+    toRecipients: [{ emailAddress: { address: to } }]
+  };
+  // Blindkopie an die Pipedrive-Dropbox: Erst dadurch legt Pipedrive die
+  // gesendete Mail zuverlässig am Vorgang ab. Über die Empfängeradresse
+  // allein ordnet Pipedrive nur der Person zu — und eine Kanzlei hängt an
+  // vielen Deals gleichzeitig.
+  if (bcc) body.bccRecipients = [{ emailAddress: { address: bcc } }];
+  const msg = await graph(`/users/${encodeURIComponent(MAILBOX)}/messages`, { method: "POST", body });
   return { id: msg.id, webLink: msg.webLink };
 }
 

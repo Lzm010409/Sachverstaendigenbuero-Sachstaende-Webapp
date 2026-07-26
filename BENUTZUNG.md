@@ -177,16 +177,41 @@ setzen. Bei diesem Volumen wird es nie erreicht.
 
 ---
 
-## 6. Was noch nicht fertig ist
+## 6. Freigabe, Outlook-Entwurf und Zuordnung in Pipedrive
 
-- **Der Mailversand.** „Freigeben & senden" protokolliert die Freigabe, verschickt
-  aber noch nichts. Dafür fehlt eine App-Registrierung mit der Berechtigung
-  `Mail.Send` (Env: `MS_SENDER_UPN`). Bis dahin: Text kopieren und aus Outlook senden.
-- **Das persistente Volume.** `DATA_DIR=/data` ist gesetzt, aber in Coolify ist noch
-  kein Volume angelegt (*Application → Storages → Add*, Mount Path `/data`). Ohne
-  Volume wird die Warteschlange bei jedem Deployment geleert und alle Entwürfe werden
-  neu erzeugt — rund 30 Cent pro Deployment. **Doppelte Anfragen entstehen dadurch
-  nicht**, dafür sorgt die Notiz in Pipedrive.
+Beim Freigeben passiert dreierlei:
+
+1. Die Freigabe wird als Notiz am Deal protokolliert.
+2. Der Text landet als **Entwurf im Outlook-Postfach** (`MS_SENDER_UPN`), nicht als
+   fertige Mail. Abgeschickt wird erst von dir aus Outlook — nichts geht ungefragt
+   raus. Der Entwurf wird als HTML ohne feste Schriftart und Farbe angelegt, damit er
+   die Outlook-Einstellungen erbt; das Kopieren aus einer Notiz mitsamt schwarzer
+   Unterstreichung entfällt.
+3. Im Cockpit erscheint ein Link direkt zu diesem Entwurf.
+
+**Zuordnung zum richtigen Deal.** Der Betreff trägt Kundenname und Aktenzeichen
+(`Sachstandsanfrage · Nuhi · [Az. 0824/1308TG]`). Das hilft beim Suchen, ordnet die
+Mail aber noch keinem Vorgang zu — Pipedrive erkennt über die Empfängeradresse nur
+die *Person*, und eine Kanzlei hängt an vielen Deals gleichzeitig. Deshalb bekommt
+jeder Entwurf zusätzlich die **deal-eigene Dropbox-Adresse als Blindkopie**:
+
+```
+kfz-sachverstaendigenbuerogollenstede+deal<Deal-ID>@pipedrivemail.com
+```
+
+In `PIPEDRIVE_BCC_DROPBOX` genügt ein Beispiel dieser Adresse (mit oder ohne
+`+deal…`) — die Deal-Nummer setzt die App je Fall selbst ein. Ist die Variable leer,
+wird kein BCC gesetzt und der Entwurf trotzdem angelegt.
+
+**Das persistente Volume.** `DATA_DIR=/data` ist gesetzt; in Coolify dazu unter
+*Application → Persistent Storage → + Add → **Volume Mount*** anlegen: Name z. B.
+`sachstaende-data`, Mount Path `/data`, Host-Pfad leer lassen (Coolify legt ein
+benanntes Docker-Volume an). *Directory Mount* wäre ein Bind-Mount auf einen
+Serverpfad, *File Mount* nur für einzelne Dateien — für `/data` ist der Volume Mount
+richtig. Danach einmal *Redeploy*. Ohne Volume wird die Warteschlange bei jedem
+Deployment geleert und alle Entwürfe werden neu erzeugt — rund 30 Cent pro
+Deployment. **Doppelte Anfragen entstehen dadurch nicht**, dafür sorgt die Notiz in
+Pipedrive.
 
 ---
 

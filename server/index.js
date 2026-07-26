@@ -195,8 +195,13 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
       try {
         outlook = await graph.createDraft({
           to: c.recipEmail,
+          // Kundenname und Aktenzeichen stehen im Betreff — das hilft beim
+          // Suchen und bei Antworten, ordnet aber allein noch keinem Deal zu.
           subject: c.subject || `Sachstandsanfrage · ${c.name || ""} · [Az. ${c.token || ""}]`,
-          text: body
+          text: body,
+          // Deal-eigene Dropbox-Adresse als Blindkopie: Erst dadurch legt
+          // Pipedrive die gesendete Mail genau an diesem Vorgang ab.
+          bcc: pd.dropboxFuerDeal(c.dealId)
         });
       } catch (err) {
         console.warn("[graph] Entwurf konnte nicht angelegt werden:", err.message);

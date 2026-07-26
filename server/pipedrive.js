@@ -195,9 +195,34 @@ function htmlToText(html) {
     .trim();
 }
 
+/*
+ * Blindkopie-Adresse ("Smart BCC") für einen einzelnen Deal.
+ *
+ * Pipedrive vergibt je Vorgang eine eigene Adresse nach dem Muster
+ *   <konto>+deal<ID>@pipedrivemail.com
+ * Erst sie legt die gesendete Mail am richtigen Deal ab. Über die
+ * Empfängeradresse allein ordnet Pipedrive nur der Person zu — und eine
+ * Kanzlei hängt an vielen Deals gleichzeitig.
+ *
+ * PIPEDRIVE_BCC_DROPBOX darf mit oder ohne +deal-Zusatz hinterlegt sein; die
+ * Deal-Nummer wird in jedem Fall neu gesetzt.
+ */
+function dropboxFuerDeal(dealId) {
+  const muster = String(process.env.PIPEDRIVE_BCC_DROPBOX || "").trim();
+  if (!muster) return null;
+  if (!/^\d+$/.test(String(dealId || ""))) return null;
+  const at = muster.lastIndexOf("@");
+  if (at < 1 || at === muster.length - 1) return null;
+  const konto = muster.slice(0, at).split("+")[0];
+  const domain = muster.slice(at + 1);
+  if (!konto) return null;
+  return `${konto}+deal${dealId}@${domain}`;
+}
+
 module.exports = {
   takeRequestCount, cacheStats,
   getOpenTasks, getDealTasks, getDeal, getNotes, getPerson, getOrganization,
   getDealMails, addNote, getOrgPersons, htmlToText, isOurs, OWN_DOMAINS,
+  dropboxFuerDeal,
   hasToken: () => Boolean(TOKEN)
 };

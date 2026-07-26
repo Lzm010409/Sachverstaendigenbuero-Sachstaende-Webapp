@@ -113,9 +113,15 @@ Stand des letzten Live-Tests: 25–27 fällige Fälle, ~19–21 Entwürfe,
 
 **Offene Punkte:**
 - **Persistentes Volume** für `DATA_DIR=/data` ist in Coolify **noch nicht angelegt**
-  (API lehnte `type: volume|bind` ab — bitte einmal per UI: Application → Storages →
-  Add, Mount Path `/data`). Ohne Volume geht nur die lokale Warteschlange bei einem
-  Redeploy verloren; Freigaben bleiben dank Notiz-Dedup erhalten.
+  (die Storages-API akzeptiert nur `type: "file"` — daher per UI: Application →
+  Persistent Storage → + Add → **Volume Mount**, Mount Path `/data`, Host-Pfad leer).
+  Ohne Volume geht nur die lokale Warteschlange bei einem Redeploy verloren;
+  Freigaben bleiben dank Notiz-Dedup erhalten.
+- **`PIPEDRIVE_BCC_DROPBOX`** setzen, damit Pipedrive gesendete Mails am Vorgang
+  ablegt. Die Adressen folgen dem Muster `<konto>+deal<ID>@pipedrivemail.com`;
+  `pd.dropboxFuerDeal()` setzt die Deal-Nummer je Fall ein, in der Variable genügt
+  ein Beispiel. Der Betreff allein reicht **nicht** — Pipedrive matcht Mail-Sync über
+  die Empfängeradresse und damit nur auf die Person, nicht auf den Deal.
 - `ANTHROPIC_API_KEY` ist nicht gesetzt. „Ändern lassen" arbeitet dann deterministisch
   (kürzt den Text). Mit Key übernimmt das Modell die Umformulierung (`server/draft.js`).
 

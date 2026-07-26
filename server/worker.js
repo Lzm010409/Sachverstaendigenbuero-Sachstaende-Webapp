@@ -50,44 +50,64 @@ async function mapLimited(items, limit, fn) {
   return out;
 }
 
-/**
+/*
  * Freigabe-Notizen nachtragen, die Pipedrive bei der Freigabe abgelehnt hat
  * (praktisch immer: Tageskontingent aufgebraucht).
  *
  * Diese Notiz ist die dauerhafte Spur einer Anfrage — analyze.js liest sie, um
  * die Wiedervorlage-Frist zu bestimmen. Fehlt sie, könnte derselbe Fall erneut
- * angefragt werden. Läuft am Anfang jedes Laufs, also auch dann, wenn das
- * Kontingent am Folgetag wieder frisch ist.
+ * angefragt werden.
  *
- * Nach VERSUCHE_MAX Anläufen wird aufgegeben, damit eine dauerhaft unmögliche
- * Notiz (gelöschter Deal) nicht endlos Kontingent verbraucht.
+ * Läuft im Viertelstundentakt, NICHT nur beim Tageslauf. Am Tageslauf
+ * aufgehängt hätte eine abends abgelehnte Notiz bis zum nächsten Morgen
+ * gewartet, obwohl das Kontingent um Mitternacht zurückgesetzt wird.
+ *
+ * Wartezeit zwischen den Anläufen: 15 Minuten, dann verdoppelnd bis höchstens
+ * sechs Stunden. So kostet ein aufgebrauchtes Kontingent nur eine Handvoll
+ * Aufrufe am Tag statt vier pro Stunde. Nach AUFGEBEN_NACH_TAGEN wird
+ * aufgegeben — eine dauerhaft unmögliche Notiz (gelöschter Deal) soll nicht
+ * endlos Kontingent verbrauchen.
  */
-const VERSUCHE_MAX = 5;
-async function notizenNachtragen() {
+const WARTE_START_MS = 15 * 60 * 1000;
+const WARTE_MAX_MS = 6 * 3600 * 1000;
+const AUFGEBEN_NACH_TAGEN = 3;
+
+function naechsterVersuchIn(versuche) {
+  return Math.min(WARTE_START_MS * Math.pow(2, Math.max(0, versuche - 1)), WARTE_MAX_MS);
+}
+
+async function notizenNachtragen({ jetzt = Date.now(), sofort = false } = {}) {
   const state = store.load();
-  if (!state.offeneNotizen.length) return;
-  const offen = state.offeneNotizen;
+  if (!state.offeneNotizen.length) return { erledigt: 0, offen: 0 };
+
   const bleibt = [];
-  let erledigt = 0;
-  for (const n of offen) {
+  let erledigt = 0, gesperrt = false;
+  for (const n of state.offeneNotizen) {
+    // Zu früh, oder ein vorheriger Anlauf in diesem Durchgang ist schon
+    // gescheitert: dann gar nicht erst versuchen. Ist das Kontingent leer,
+    // scheitern auch alle weiteren und verbrennen nur Aufrufe.
+    if (gesperrt || (!sofort && n.naechsterVersuch && jetzt < Date.parse(n.naechsterVersuch))) {
+      bleibt.push(n);
+      continue;
+    }
     try {
       await pd.addNote(n.dealId, n.content);
       erledigt++;
     } catch (err) {
+      gesperrt = true;
       n.versuche = (n.versuche || 0) + 1;
       n.letzterFehler = err.message;
-      if (n.versuche < VERSUCHE_MAX) bleibt.push(n);
-      else console.error(`[worker] Notiz für Deal ${n.dealId} nach ${n.versuche} Versuchen aufgegeben:`, err.message);
-      // Beim ersten Fehlschlag abbrechen: Ist das Kontingent aufgebraucht,
-      // scheitern auch alle weiteren und verbrennen nur Aufrufe.
-      const rest = offen.slice(offen.indexOf(n) + 1);
-      bleibt.push(...rest);
-      break;
+      n.naechsterVersuch = new Date(jetzt + naechsterVersuchIn(n.versuche)).toISOString();
+      const alterTage = (jetzt - Date.parse(n.seit)) / 86400000;
+      if (alterTage < AUFGEBEN_NACH_TAGEN) bleibt.push(n);
+      else console.error(`[worker] Notiz für Deal ${n.dealId} nach ${Math.round(alterTage)} Tagen`
+        + ` und ${n.versuche} Versuchen aufgegeben:`, err.message);
     }
   }
   state.offeneNotizen = bleibt;
   store.save(state);
   if (erledigt) console.log(`[worker] ${erledigt} vorgemerkte Notiz(en) nachgetragen, ${bleibt.length} offen.`);
+  return { erledigt, offen: bleibt.length };
 }
 
 /** Ein Durchlauf: fällige Tasks → Analyse → Entwürfe → Warteschlange. */
@@ -102,7 +122,9 @@ async function runOnce({ today = new Date(), force = false } = {}) {
   running = true;
   const startedAt = new Date().toISOString();
   try {
-    await notizenNachtragen();
+    // „Aktualisieren" soll auch ausstehende Notizen sofort erneut versuchen,
+    // ohne die Wartezeit abzuwarten — der Knopf ist die Handbedienung.
+    await notizenNachtragen({ sofort: force });
     const todayISO = today.toISOString().slice(0, 10);
     const tasks = (await pd.getOpenTasks())
       .filter(t => t.type === "task" && SUBJECT_PREFIX.test(String(t.subject || "")))
@@ -480,6 +502,11 @@ function start() {
   const taktMinuten = Number(process.env.TAKT_MINUTEN || 15);
 
   const tick = async () => {
+    // Zuerst, und unabhängig vom Tageslauf: ausstehende Freigabe-Notizen.
+    // Eigener Fehlerfang, damit ein Problem hier den Takt nicht abbricht.
+    try { await notizenNachtragen(); }
+    catch (err) { console.warn("[worker] Notiz-Nachtrag fehlgeschlagen:", err.message); }
+
     try {
       const state = store.load();
       const heute = digest.heuteISO(new Date());
@@ -515,4 +542,7 @@ function start() {
     + ` Prüftakt alle ${taktMinuten} Minuten (ohne Abrufe).`);
 }
 
-module.exports = { runOnce, start, isRunning: () => running, getLastError: () => lastError };
+module.exports = {
+  runOnce, start, notizenNachtragen,
+  isRunning: () => running, getLastError: () => lastError
+};

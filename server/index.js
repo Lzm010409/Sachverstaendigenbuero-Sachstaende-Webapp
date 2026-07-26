@@ -265,7 +265,9 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
     if (notizFehler) {
       state.offeneNotizen.push({
         dealId: c.dealId, token: c.token || null, content: noteHtml,
-        seit: new Date().toISOString(), versuche: 1, letzterFehler: notizFehler
+        // versuche zählt die NACHversuche; der gescheiterte Anlauf von eben
+        // steht in letzterFehler. Sonst begänne die Wartezeit eine Stufe zu hoch.
+        seit: new Date().toISOString(), versuche: 0, letzterFehler: notizFehler
       });
       console.warn(`[approve] Notiz am Deal ${c.dealId} vorgemerkt:`, notizFehler);
     }

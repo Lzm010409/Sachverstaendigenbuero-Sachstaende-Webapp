@@ -84,6 +84,15 @@ Pipedrive  ──────────────────────►
 `LAUF_STUNDE` erreicht und heute noch kein Lauf vermerkt (`laufGemachtAm`), läuft er
 einmal. Sonst wird nur geprüft, ob die Tagesübersicht fällig ist.
 
+**Ausstehende Freigabe-Notizen laufen bewusst außerhalb dieses Tageslaufs.**
+`notizenNachtragen()` steht am Anfang jedes Taktes, nicht in `runOnce()`. Am Tageslauf
+aufgehängt hätte eine abends abgelehnte Notiz bis zum nächsten Morgen gewartet, obwohl
+das Pipedrive-Kontingent um Mitternacht zurückgesetzt wird. Die Wartezeit zwischen den
+Anläufen verdoppelt sich (15 Minuten bis höchstens 6 Stunden), und beim ersten
+Fehlschlag eines Durchgangs wird abgebrochen — ist das Kontingent leer, scheitern die
+übrigen ohnehin und verbrennen nur Aufrufe. `runOnce({force: true})` aus dem Knopf
+„Aktualisieren" übergeht die Wartezeit. Nach drei Tagen wird aufgegeben.
+
 ---
 
 ## 4. Die Entscheidungskaskade

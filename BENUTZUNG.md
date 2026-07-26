@@ -197,10 +197,18 @@ Beim Freigeben passiert dreierlei:
 
 Nimmt Pipedrive die Notiz gerade nicht an — praktisch immer, weil das Tageskontingent
 der Pipedrive-Schnittstelle aufgebraucht ist —, **entsteht der Outlook-Entwurf
-trotzdem**. Die Notiz wird vorgemerkt und beim nächsten Lauf nachgetragen; im Cockpit
-steht ein entsprechender Hinweis. Umgekehrt gilt: Lässt sich der Entwurf *nicht*
-anlegen, wird die Freigabe **nicht** vermerkt und der Fall bleibt in der Liste — sonst
-verschwände er, ohne dass irgendwo eine Mail läge.
+trotzdem**. Die Notiz wird vorgemerkt und selbsttätig nachgetragen: erstmals nach einer
+Viertelstunde, danach in wachsenden Abständen (30 Minuten, 1 Stunde, 2, 4, höchstens 6),
+bis es klappt. Das hängt **nicht** am Tageslauf — ein abends aufgebrauchtes Kontingent
+ist um Mitternacht wieder frei, und der nächste Anlauf kommt dann von allein. Wer nicht
+warten will, drückt **⟳**; das übergeht die Wartezeit. Nach drei Tagen ohne Erfolg wird
+aufgegeben und im Log vermerkt.
+
+In der Ergebniskarte des Falls steht, ob die Notiz angekommen ist.
+
+Umgekehrt gilt: Lässt sich der Entwurf *nicht* anlegen, wird die Freigabe **nicht**
+vermerkt und der Fall bleibt in der Liste — sonst verschwände er, ohne dass irgendwo
+eine Mail läge.
 
 **Zuordnung zum richtigen Deal.** Der Betreff trägt Kundenname und Aktenzeichen
 (`Sachstandsanfrage · Nuhi · [Az. 0824/1308TG]`). Das hilft beim Suchen, ordnet die

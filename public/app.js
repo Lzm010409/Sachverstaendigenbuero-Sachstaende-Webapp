@@ -218,7 +218,9 @@
       zeilen.push(zeile("ok", "Notiz in Pipedrive", "Am Deal hinterlegt."));
     } else if (c.notiz && c.notiz.ok === false) {
       zeilen.push(zeile("warn", "Notiz in Pipedrive",
-        `Noch nicht angelegt (${c.notiz.fehler || "Grund unbekannt"}). Wird beim nächsten Lauf nachgetragen.`));
+        `Noch nicht angelegt (${c.notiz.fehler || "Grund unbekannt"}).`
+        + ` Die App versucht es von allein weiter — erstmals nach einer Viertelstunde, danach in`
+        + ` größeren Abständen. Am Entwurf ändert das nichts. Sofort erneut: Knopf „Aktualisieren".`));
     } else if (c._resolved === "sent") {
       zeilen.push(zeile("neutral", "Notiz in Pipedrive", "Nicht festgehalten — die Freigabe stammt aus einer früheren Fassung."));
     }

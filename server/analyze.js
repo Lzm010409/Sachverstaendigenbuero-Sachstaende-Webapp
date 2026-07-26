@@ -15,7 +15,10 @@ const RE_ERLEDIGT = /\b(reguliert|ausgeglichen|vollständig (?:bezahlt|beglichen
 // Begriffe, die eine Zahlung nur vortäuschen: Gerichtskostenvorschuss, Teilzahlungen,
 // Vorschüsse an die Kanzlei. Trifft eines davon im selben Satz zu, gilt es nicht als reguliert.
 const RE_KEINE_REGULIERUNG = /\b(vorschuss|vorschüsse|gerichtskosten|gerichtskostenvorschuss|teilzahlung|teilbetrag|abschlag|akontozahlung|anzahlung|klage)\b/i;
-const RE_ABWARTEN = /\b(abwarten|noch nicht absehbar|dauert\s+(?:\w+\s+){0,2}(?:noch|länger)|gerichtstermin|termin ist angesetzt|verlegung|in prüfung|wird geprüft|prüfung läuft|klage (?:ist )?anhängig|gerichtlich|verfahren läuft|anfangsstadium)\b/i;
+// Laufendes Gerichtsverfahren — hier dauert es naturgemäß länger (GERICHT_TAGE).
+const RE_GERICHT = /\b(gerichtstermin|termin ist angesetzt|verhandlungstermin|klage (?:ist )?(?:anhängig|eingereicht|erhoben)|klageverfahren|verfahren läuft|rechtshängig|gericht|verlegung|beweisaufnahme|gutachterauftrag des gerichts|sachverständigenbeweis)\b/i;
+// Allgemeines "abwarten" ohne Gerichtsbezug (ABWARTEN_TAGE).
+const RE_ABWARTEN = /\b(abwarten|noch nicht absehbar|dauert\s+(?:\w+\s+){0,2}(?:noch|länger)|in prüfung|wird geprüft|prüfung läuft|anfangsstadium|melde[nt] (?:sich|uns)|rückmeldung (?:steht|folgt) (?:noch )?aus)\b/i;
 const RE_FRAGE_AN_UNS = /(können sie|könnten sie|bitte (?:senden|übersenden|teilen|mitteilen|um)|benötigen wir|benötige ich|wir bitten um|senden sie|reichen sie|liegt (?:uns|mir) .{0,30}nicht vor|fehlt(?:en)? (?:noch|uns)|rückfrage|\?$)/im;
 const RE_UNSER_ENTWURF = /Sachstandsanfrage \(Entwurf/i;
 // Vom Cockpit geschriebene Freigabe-Notiz. Damit bleibt Pipedrive die Wahrheit:
@@ -166,6 +169,7 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
   let calloutBody = null;
   let skipReason = null;
   let requestText = null;   // konkrete Bitte der Gegenseite, falls vorhanden
+  let isCourtCase = false;  // laufendes Gerichtsverfahren erkannt
 
   const overdueDays = daysBetween(task.due_date, todayISO);
   if (overdueDays !== null && overdueDays > 0) status = "ueberfaellig";
@@ -201,19 +205,31 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
     }
   }
 
-  // 3) Frisches „abwarten" (Notiz/Mail jünger als ABWARTEN_TAGE)
-  const waitDays = Number(process.env.ABWARTEN_TAGE || 45);
+  // 3) Frisches „abwarten": Gerichtsverfahren mit längerer, sonst kurzer Frist.
+  //    Bei laufendem Verfahren dauert es erfahrungsgemäß Monate, im Normalfall
+  //    wird nach 30 Tagen erneut nachgefragt.
+  const gerichtDays = Number(process.env.GERICHT_TAGE || 60);
+  const waitDays = Number(process.env.ABWARTEN_TAGE || 30);
   if (!skipReason && status !== "rueckfrage") {
+    const gerichtHit = findSignal(RE_GERICHT, sortedMails, humanNotes, { notBefore: signalCutoff });
     const waitHit = findSignal(RE_ABWARTEN, sortedMails, humanNotes, { notBefore: signalCutoff });
-    if (waitHit) {
-      const age = daysBetween(waitHit.date, todayISO);
-      if (age !== null && age <= waitDays) {
-        status = "abwarten";
-        calloutType = "warn";
-        calloutTitle = "Abwarten vermerkt";
-        calloutBody = `${waitHit.label}: „${waitHit.quote}“ — vor ${age} Tagen, daher keine neue Anfrage.`;
-        skipReason = `abwarten vermerkt (${waitHit.label}, vor ${age} Tagen)`;
-      }
+    // Die jeweils zutreffende Frist gegen das Alter des Signals prüfen.
+    const candidates = [
+      gerichtHit && { hit: gerichtHit, limit: gerichtDays, kind: "Gerichtsverfahren" },
+      waitHit && { hit: waitHit, limit: waitDays, kind: "abwarten" }
+    ].filter(Boolean);
+
+    for (const cand of candidates) {
+      const age = daysBetween(cand.hit.date, todayISO);
+      if (age === null || age > cand.limit) continue;
+      status = "abwarten";
+      calloutType = "warn";
+      calloutTitle = cand.kind === "Gerichtsverfahren" ? "Verfahren läuft" : "Abwarten vermerkt";
+      calloutBody = `${cand.hit.label}: „${cand.hit.quote}“ — vor ${age} Tagen. `
+        + `Nächste Nachfrage nach ${cand.limit} Tagen (${cand.kind}).`;
+      skipReason = `${cand.kind} (${cand.hit.label}, vor ${age} von ${cand.limit} Tagen)`;
+      isCourtCase = cand.kind === "Gerichtsverfahren";
+      break;
     }
   }
 
@@ -268,6 +284,7 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
     needsDraft: !skipReason,
     isRueckfrage: status === "rueckfrage",
     requestText,
+    isCourtCase,
     skipReason,
     calloutType, calloutTitle, calloutBody,
     recipient,

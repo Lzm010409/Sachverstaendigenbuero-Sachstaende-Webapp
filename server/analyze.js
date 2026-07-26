@@ -15,6 +15,9 @@ const RE_ERLEDIGT = /\b(reguliert|ausgeglichen|vollständig bezahlt|zahlung (?:i
 const RE_ABWARTEN = /\b(abwarten|noch nicht absehbar|dauert\s+(?:\w+\s+){0,2}(?:noch|länger)|gerichtstermin|termin ist angesetzt|verlegung|in prüfung|wird geprüft|prüfung läuft|klage (?:ist )?anhängig|gerichtlich|verfahren läuft|anfangsstadium)\b/i;
 const RE_FRAGE_AN_UNS = /(können sie|könnten sie|bitte (?:senden|übersenden|teilen|mitteilen|um)|benötigen wir|benötige ich|wir bitten um|senden sie|reichen sie|liegt (?:uns|mir) .{0,30}nicht vor|fehlt(?:en)? (?:noch|uns)|rückfrage|\?$)/im;
 const RE_UNSER_ENTWURF = /Sachstandsanfrage \(Entwurf/i;
+// Vom Cockpit geschriebene Freigabe-Notiz. Damit bleibt Pipedrive die Wahrheit:
+// auch nach einem Neustart/Redeploy gilt ein Fall als erledigt.
+const RE_FREIGABE_NOTIZ = /Sachstandsanfrage freigegeben/i;
 
 /** Aktenzeichen aus einem Text (Task-Betreff, Deal-Titel) ziehen. */
 function extractToken(text) {
@@ -64,7 +67,10 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
   const newestIncoming = incoming[0] || null;
 
   // Notizen ohne unsere eigenen Entwurfs-Notizen (die sind kein Sachstand).
-  const humanNotes = (notes || []).filter(n => !RE_UNSER_ENTWURF.test(stripTags(n.content)));
+  const humanNotes = (notes || []).filter(n => {
+    const t = stripTags(n.content);
+    return !RE_UNSER_ENTWURF.test(t) && !RE_FREIGABE_NOTIZ.test(t);
+  });
 
   // --- Empfänger bestimmen -------------------------------------------------
   // Reihenfolge: (1) hinterlegte Kanzlei, (2) Korrespondenz mit der Gegenseite,
@@ -202,7 +208,21 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
     }
   }
 
-  // 4) Dedup: haben wir nach dem Fälligkeitsdatum schon angefragt?
+  // 4a) Dedup über die Freigabe-Notiz am Deal (überlebt Neustarts).
+  if (!skipReason) {
+    const freigabe = (notes || [])
+      .filter(n => RE_FREIGABE_NOTIZ.test(stripTags(n.content)))
+      .sort((a, b) => String(b.add_time).localeCompare(String(a.add_time)))[0];
+    if (freigabe && (daysBetween(task.due_date, freigabe.add_time) || 0) >= 0) {
+      status = "bereits_angefragt";
+      calloutType = "ok";
+      calloutTitle = "Bereits freigegeben";
+      calloutBody = `Am ${fmtDE(freigabe.add_time)} wurde bereits eine Sachstandsanfrage freigegeben (Notiz am Deal).`;
+      skipReason = `bereits freigegeben am ${fmtDE(freigabe.add_time)}`;
+    }
+  }
+
+  // 4b) Dedup: haben wir nach dem Fälligkeitsdatum schon per Mail angefragt?
   if (!skipReason && lastOwnRequest && daysBetween(task.due_date, lastOwnRequest) >= 0) {
     status = "bereits_angefragt";
     calloutType = "ok";

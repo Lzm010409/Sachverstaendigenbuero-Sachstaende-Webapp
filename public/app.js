@@ -69,12 +69,30 @@
     return !c._resolved && Boolean(c.draft);
   }
 
+  /**
+   * Frisch entschieden — bleibt noch eine Weile in der Arbeitsliste stehen,
+   * damit nach der Freigabe nachvollziehbar ist, was gerade erledigt wurde.
+   * Danach wandert der Fall in den Filter „Erledigt".
+   */
+  function istFrischEntschieden(c) {
+    if (!c._resolved) return false;
+    const stunden = Number(c.nachleuchtenStunden || 6);
+    const seit = c.decidedAt ? Date.parse(c.decidedAt) : (c._decidedLocal || 0);
+    if (!seit) return Boolean(c._decidedLocal);      // gerade in dieser Sitzung entschieden
+    return (Date.now() - seit) < stunden * 3600 * 1000;
+  }
+
+  /** Was in der Arbeitsliste erscheint: offene Fälle plus frisch entschiedene. */
+  function inArbeitsliste(c) {
+    return isPending(c) || istFrischEntschieden(c);
+  }
+
   function visible(c) {
     if (filter === "alle") return true;
     if (filter === "erledigt") return !isPending(c);          // übersprungen + freigegeben
-    if (!isPending(c)) return false;                          // sonst nur Offenes zeigen
-    if (filter === "ueberfaellig") return c.status === "ueberfaellig";
-    if (filter === "rueckfrage") return c.status === "rueckfrage";
+    if (!inArbeitsliste(c)) return false;
+    if (filter === "ueberfaellig") return isPending(c) && c.status === "ueberfaellig";
+    if (filter === "rueckfrage") return isPending(c) && c.status === "rueckfrage";
     return true;                                             // "offen"
   }
 
@@ -257,6 +275,7 @@
       try {
         const r = await api(`/api/cases/${c.id}/approve`, { method: "POST", body: JSON.stringify({ draft: editor ? editor.value : c.draft }) });
         c._resolved = "sent";
+        c._decidedLocal = Date.now();
         c._resolvedMsg = r.message || `Entwurf an ${c.recipOrg} (${c.recipEmail}) freigegeben.`;
         toast("ok", "Freigegeben", `${c.token}: ${r.message || "erledigt."}`);
         afterResolve(c);
@@ -296,6 +315,7 @@
         const r = await api(`/api/cases/${c.id}/skip`, { method: "POST", body: JSON.stringify({ reason: c.skipReason }) });
         const done = c.status === "reguliert";
         c._resolved = r.status || (done ? "sent" : "skipped");
+        c._decidedLocal = Date.now();
         c._resolvedMsg = done
           ? `Als reguliert abgeschlossen.`
           : `Übersprungen — Grund: ${c.skipReason || "manuell übersprungen"}.`;

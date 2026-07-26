@@ -33,6 +33,7 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 const PORT = process.env.PORT || 3000;
+const NACHLEUCHTEN_STUNDEN = Number(process.env.NACHLEUCHTEN_STUNDEN || 6);
 const DEMO_MODE = String(process.env.DEMO_MODE || "").toLowerCase() === "true" || !pd.hasToken();
 
 // --- Zugangsschutz --------------------------------------------------------
@@ -115,7 +116,9 @@ app.get("/api/cases", (_req, res, next) => {
       ...c,
       // Vom Nutzer bearbeiteter Text hat Vorrang.
       draft: c.editedBody || c.draft,
-      _resolved: c._resolved || (c.decision === "approved" ? "sent" : c.decision === "skipped" ? "skipped" : null)
+      _resolved: c._resolved || (c.decision === "approved" ? "sent" : c.decision === "skipped" ? "skipped" : null),
+      // Wie lange eine Entscheidung noch in der Arbeitsliste nachleuchtet.
+      nachleuchtenStunden: NACHLEUCHTEN_STUNDEN
     }));
     res.json({ cases, mode: DEMO_MODE ? "demo" : "live" });
   } catch (err) { next(err); }

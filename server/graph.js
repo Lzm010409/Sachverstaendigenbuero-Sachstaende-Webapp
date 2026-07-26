@@ -108,18 +108,34 @@ async function diagnose() {
     return ergebnis;
   }
 
-  const nutzerDa = await pruefe("Benutzer vorhanden", `/users/${encodeURIComponent(MAILBOX)}?$select=id,userPrincipalName,mail`);
+  // Maßgeblich ist allein, ob sich der Entwurfsordner öffnen lässt — genau das
+  // braucht createDraft. Alles andere ist nur Ursachenforschung, wenn es
+  // scheitert.
   const postfachDa = await pruefe("Zugriff auf das Postfach", `/users/${encodeURIComponent(MAILBOX)}/mailFolders/drafts?$select=id`);
-
-  if (!nutzerDa) {
-    ergebnis.hinweis = `MS_SENDER_UPN ist auf „${MAILBOX}" gesetzt, aber unter diesem Namen findet`
-      + ` Microsoft 365 kein Konto. Erwartet wird der vollständige Anmeldename (UPN), kein Alias.`;
-  } else if (!postfachDa) {
-    ergebnis.hinweis = `Das Konto „${MAILBOX}" gibt es, aber die Anwendung darf nicht auf sein Postfach zugreifen.`
-      + ` Das spricht für eine Exchange-Zugriffsrichtlinie (Application Access Policy), die dieses Postfach`
-      + ` nicht einschließt — oder für ein Konto ohne Exchange-Postfach.`;
-  } else {
+  if (postfachDa) {
     ergebnis.hinweis = "Die Postfach-Anbindung funktioniert.";
+    return ergebnis;
+  }
+
+  // Erst jetzt nachsehen, ob es das Konto überhaupt gibt. Dieser Aufruf ist
+  // kein Beweis in beide Richtungen: Er braucht eine Verzeichnisberechtigung
+  // (User.Read.All), die für den Mailversand nicht nötig ist. Ein 403 mit
+  // Authorization_RequestDenied heißt also „darf ich nicht nachschlagen" und
+  // gerade NICHT „Konto existiert nicht" — diese Verwechslung hat hier schon
+  // einmal zu einem falschen Hinweis geführt.
+  await pruefe("Konto nachschlagen (nur zur Eingrenzung)", `/users/${encodeURIComponent(MAILBOX)}?$select=id`);
+  const nachschlag = ergebnis.schritte[ergebnis.schritte.length - 1];
+  const unklar = !nachschlag.ok && nachschlag.code === "Authorization_RequestDenied";
+
+  if (!nachschlag.ok && !unklar && nachschlag.status === 404) {
+    ergebnis.hinweis = `Unter „${MAILBOX}" findet Microsoft 365 kein Konto.`
+      + ` MS_SENDER_UPN muss der vollständige Anmeldename (UPN) sein, kein Alias.`;
+  } else {
+    ergebnis.hinweis = `Die Anwendung kommt nicht an das Postfach „${MAILBOX}".`
+      + ` Wahrscheinlich schließt eine Exchange-Zugriffsrichtlinie (Application Access Policy)`
+      + ` dieses Postfach nicht ein, oder das Konto hat kein Exchange-Postfach.`
+      + (unklar ? ` Ob das Konto existiert, lässt sich nicht prüfen — dafür fehlt der App die`
+        + ` Verzeichnisberechtigung. Das ist in Ordnung und für den Mailversand nicht nötig.` : "");
   }
   return ergebnis;
 }

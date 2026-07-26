@@ -91,7 +91,17 @@ function findCase(id) {
 
 // --- API ------------------------------------------------------------------
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, mode: DEMO_MODE ? "demo" : "live", time: new Date().toISOString() });
+  res.json({
+    ok: true, mode: DEMO_MODE ? "demo" : "live", time: new Date().toISOString(),
+    // Bewusst nur Ja/Nein und niemals Werte: Diese Auskunft ist ohne Anmeldung
+    // erreichbar. Sie beantwortet die eine Frage, die man von außen sonst nicht
+    // klären kann — ist eine Einstellung im laufenden Container angekommen?
+    eingerichtet: {
+      outlook: graph.isConfigured(),
+      pipedriveDropbox: Boolean(pd.dropboxFuerDeal(1)),
+      anthropic: Boolean(process.env.ANTHROPIC_API_KEY)
+    }
+  });
 });
 
 app.get("/api/config", (req, res) => {

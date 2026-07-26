@@ -1,0 +1,8 @@
+{
+  "cases": {},
+  "lastRun": "2026-07-26T17:35:32.329Z",
+  "lastRunSummary": {
+    "error": "Pipedrive GET /activities: daily request budget exceeded"
+  },
+  "version": 1
+}

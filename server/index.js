@@ -273,9 +273,17 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
     store.setDecision(state, c.id, "approved",
       (outlook && outlook.id ? "Entwurf in Outlook" : "freigegeben")
       + (notizFehler ? ", Notiz wird nachgetragen" : `, Notiz am Deal ${c.dealId}`));
-    if (outlook && outlook.id) {
-      const gespeichert = state.cases[c.id];
-      if (gespeichert) gespeichert.outlookDraft = { id: outlook.id, webLink: outlook.webLink };
+    // Am Fall festhalten, was tatsächlich passiert ist. Das Cockpit zeigt es
+    // später an — sonst bliebe nach der Freigabe offen, ob die Notiz in
+    // Pipedrive angekommen ist und wo der Entwurf liegt.
+    const gespeichert = state.cases[c.id];
+    if (gespeichert) {
+      if (outlook && outlook.id) {
+        gespeichert.outlookDraft = { id: outlook.id, webLink: outlook.webLink, postfach: outlook.postfach || null };
+      }
+      gespeichert.notiz = notizFehler
+        ? { ok: false, fehler: notizFehler }
+        : { ok: true, am: new Date().toISOString() };
     }
     store.save(state);
 

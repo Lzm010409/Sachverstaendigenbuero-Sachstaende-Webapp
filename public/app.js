@@ -185,6 +185,53 @@
       threadHtml(c) + `</div>`;
   }
 
+  /**
+   * Was nach der Entscheidung passiert ist — eine Zeile je Schritt.
+   *
+   * Tritt an die Stelle des Entwurfs, sobald ein Fall entschieden ist. Vorher
+   * ersetzte eine grüne Meldung die ganze Fallansicht; Akte, Notizen und
+   * Mailverlauf waren damit weg, und ob die Pipedrive-Notiz angekommen ist,
+   * stand nirgends.
+   */
+  function ergebnisHtml(c) {
+    const zeile = (zustand, titel, text, link, linkText) =>
+      `<div class="erg ${zustand}"><span class="mark">${zustand === "ok" ? "✓" : zustand === "warn" ? "!" : "–"}</span>` +
+      `<div><div class="et">${esc(titel)}</div><div class="eb">${esc(text)}` +
+      (link ? ` <a href="${esc(link)}" target="_blank" rel="noopener">${esc(linkText)} ↗</a>` : "") +
+      `</div></div></div>`;
+
+    const zeilen = [];
+    if (c._resolved === "skipped") {
+      zeilen.push(zeile("neutral", "Übersprungen", c.decisionNote || c._resolvedMsg || "Ohne Anfrage abgelegt."));
+    } else {
+      const d = c.outlookDraft;
+      zeilen.push(d && d.id
+        ? zeile("ok", "Outlook-Entwurf", `Liegt im Postfach${d.postfach ? " " + d.postfach : ""} — noch nicht versendet.`,
+          d.webLink, "In Outlook öffnen")
+        : zeile("warn", "Outlook-Entwurf", "Wurde nicht angelegt. Der Text unten lässt sich von Hand übernehmen."));
+
+      if (c.recipEmail) zeilen.push(zeile("ok", "Adressat", c.recipEmail + (c.recipOrg ? ` · ${c.recipOrg}` : "")));
+    }
+
+    // Die Notiz — genau die Frage, die man sich nach dem Freigeben stellt.
+    if (c.notiz && c.notiz.ok) {
+      zeilen.push(zeile("ok", "Notiz in Pipedrive", "Am Deal hinterlegt."));
+    } else if (c.notiz && c.notiz.ok === false) {
+      zeilen.push(zeile("warn", "Notiz in Pipedrive",
+        `Noch nicht angelegt (${c.notiz.fehler || "Grund unbekannt"}). Wird beim nächsten Lauf nachgetragen.`));
+    } else if (c._resolved === "sent") {
+      zeilen.push(zeile("neutral", "Notiz in Pipedrive", "Nicht festgehalten — die Freigabe stammt aus einer früheren Fassung."));
+    }
+
+    const text = c.editedBody || c.draft;
+    return `<div class="card"><div class="card-head"><span class="h">Ergebnis</span>` +
+      `<span class="badge">${esc(STATUS_LABEL[c._resolved] || "Erledigt")}</span></div>` +
+      `<div class="ergListe">${zeilen.join("")}` +
+      (text ? `<div class="erg neutral"><span class="mark">✎</span><div style="min-width:0">` +
+        `<div class="et">Freigegebener Text</div>${langtext(text, "Anzeigen")}</div></div>` : "") +
+      `</div></div>`;
+  }
+
   function notizenHtml(c) {
     const n = c.notizen || [];
     if (!n.length) return "";
@@ -205,15 +252,6 @@
     renderList();
     if (!c) return;
 
-    if (c._resolved) {
-      detailEl.innerHTML =
-        `<div class="detail-inner"><div class="dhead"><div class="toprow">` +
-        `<h2>${esc(c.name)}</h2><span class="chip sent">${STATUS_LABEL[c._resolved]}</span></div>` +
-        `<span class="date mono">${esc(c.token)}</span></div>` +
-        `<div class="callout ok"><div class="ic">✓</div><div><div class="t">Erledigt</div>` +
-        `<div class="b">${esc(c._resolvedMsg || "")}</div></div></div></div>`;
-      return;
-    }
 
     const co = c.calloutType || "info";
     const cTitle = c.calloutTitle || (co === "info" ? "Letzter Stand" : "Hinweis");
@@ -240,8 +278,13 @@
         `<div class="b">${esc(c.ai.problems.join("; "))} — es wird der geprüfte Standardtext gezeigt.</div></div></div>`;
     }
 
+    // Entschiedene Fälle behalten ihre volle Ansicht — Akte, Notizen und
+    // Mailverlauf bleiben stehen. Nur an der Stelle des Entwurfs steht dann,
+    // was aus der Entscheidung geworden ist.
     let draftSection = "";
-    if (c.draft) {
+    if (c._resolved) {
+      draftSection = ergebnisHtml(c);
+    } else if (c.draft) {
       const toLine = `<div class="draft-to"><span class="lbl">An</span>` +
         `<span class="addr mono">${esc(c.recipEmail)}</span>` +
         (c.recipPerson ? `<span class="pill">${esc(c.recipPerson)}</span>` : "") +
@@ -278,10 +321,16 @@
         `</div></div>`;
     }
 
+    // Steht rechts etwas Eigenes — Entwurf oder Ergebnis —, bleibt der
+    // Mailverlauf links. Sonst wandert er nach rechts, statt die Spalte
+    // leer stehen zu lassen.
+    const rechtsBelegt = Boolean(c._resolved || c.draft);
+
     detailEl.innerHTML =
       `<div class="detail-inner">` +
       `<div class="dhead"><div class="toprow"><h2>${esc(c.name)}</h2>` +
-      `<span class="chip ${c.status}">${STATUS_LABEL[c.status]}</span>` +
+      `<span class="chip ${c._resolved ? "sent" : c.status}">` +
+      `${STATUS_LABEL[c._resolved || c.status]}</span>` +
       `<span style="margin-left:auto" class="date mono">${esc(c.token)}</span></div>` +
       `<div class="meta-grid">${metaCells(c)}</div></div>` +
       `<div class="ctx">` +
@@ -289,13 +338,10 @@
       `<div class="t">${esc(cTitle)}</div><div class="b">${esc(cBody)}</div></div></div>` +
       aiBlock +
       notizenHtml(c) +
-      // Gibt es keinen Entwurf, stünde die rechte Spalte leer. Dann wandert der
-      // Mailverlauf dorthin: Notizen links, Korrespondenz rechts, beide in
-      // voller Breite statt zusammengedrängt in einer Hälfte.
-      (c.draft ? mailkarte(c) : "") +
+      (rechtsBelegt ? mailkarte(c) : "") +
       `</div>` +                       /* .ctx zu */
-      `<div class="draftCol${c.draft ? "" : " frei"}">` +
-      (c.draft ? draftSection : mailkarte(c)) + `</div>` +
+      `<div class="draftCol${rechtsBelegt ? "" : " frei"}">` +
+      (rechtsBelegt ? draftSection : mailkarte(c)) + `</div>` +
       `</div>`;
 
     wireDetail(c);

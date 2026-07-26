@@ -174,6 +174,19 @@
   .volltext { font-size: 13px; line-height: 1.55; color: var(--text); white-space: pre-wrap;
     overflow-wrap: anywhere; background: var(--surface-2); border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 12px; max-height: 420px; overflow-y: auto; }
+  /* Ergebniskarte nach der Entscheidung: eine Zeile je Schritt, damit auf
+     einen Blick klar ist, was angelegt wurde und was noch aussteht. */
+  .ergListe { padding: 4px 0; }
+  .erg { display: flex; gap: 11px; padding: 11px 16px; border-bottom: 1px solid var(--border); align-items: flex-start; }
+  .erg:last-child { border-bottom: 0; }
+  .erg .mark { font-size: 14px; line-height: 1.45; width: 16px; flex: none; text-align: center; }
+  .erg.ok .mark { color: var(--ok, #3fb950); }
+  .erg.warn .mark { color: var(--warn); }
+  .erg.neutral .mark { color: var(--text-faint); }
+  .erg .et { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; font-weight: 650; color: var(--text-faint); }
+  .erg .eb { font-size: 13.5px; color: var(--text); margin-top: 2px; overflow-wrap: anywhere; }
+  .erg .eb a { color: var(--accent); font-weight: 600; }
+
   .notiz { padding: 11px 16px; border-bottom: 1px solid var(--border); }
   .notiz:last-child { border-bottom: 0; }
   .notiz .when { font-size: 11.5px; color: var(--text-faint); }

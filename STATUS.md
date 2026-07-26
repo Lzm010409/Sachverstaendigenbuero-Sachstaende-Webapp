@@ -119,6 +119,32 @@ Stand des letzten Live-Tests: 25–27 fällige Fälle, ~19–21 Entwürfe,
 - `ANTHROPIC_API_KEY` ist nicht gesetzt. „Ändern lassen" arbeitet dann deterministisch
   (kürzt den Text). Mit Key übernimmt das Modell die Umformulierung (`server/draft.js`).
 
+## 3c. KI-Anbieter — entschieden: Anthropic (nicht über n8n)
+
+**Entscheidung des Nutzers:** Entwürfe laufen direkt über die Anthropic-API
+(`server/ai.js`), Modell `claude-sonnet-5`. Nicht über n8n umleiten.
+
+Begründung, bitte nicht neu aufrollen:
+- **n8n spart keinen Key.** Der Anthropic-Node in n8n braucht dieselbe
+  Zugangsdaten-Art (API-Key aus console.anthropic.com). Eine Anmeldung mit dem
+  Claude-Abo (Max) gibt es dort nicht — die OAuth-Anmeldungen in diesem n8n
+  betreffen Google/Microsoft/Instagram, alle KI-Anbieter laufen über API-Keys.
+- **Max-Abo ≠ API.** Getrennte Produkte, getrennte Abrechnung, keine Brücke.
+- Der Umweg über n8n würde zudem Latenz, einen weiteren Ausfallpunkt und den
+  Verlust des Prompt-Caching-Rabatts bedeuten — derselbe Fehler wie beim
+  ursprünglichen Mail-Webhook.
+
+**Im n8n vorhanden** (Stand 2026-07-26, 69 Credentials geprüft): OpenAI, Mistral
+(mehrere, u. a. „Lechat Sachstandstoken"), Google Gemini, HuggingFace, Jina.
+**Kein** Anthropic-Credential. Falls der Nutzer später doch auf ein bestehendes
+Konto wechseln will, wäre `server/ai.js` die einzige anzupassende Stelle
+(Chat-Completions-Format statt Messages-API; Prüfschritt und Fallback bleiben).
+
+**Kostenbremse — nicht entfernen:** `server/worker.js` erzeugt einen Entwurf nur
+neu, wenn sich der Fingerprint des Falls geändert hat. Ohne das würde jeder
+30-Minuten-Lauf für jeden Fall erneut anfragen (~1000 Anfragen/Tag statt
+einer Handvoll). Belegt durch zwei Läufe hintereinander: 3 Aufrufe, dann 0.
+
 ## 4. Nächste Schritte — Demo → Live
 
 Alle Nahtstellen sind in `server/index.js` mit `TODO(live)` markiert. Zu bauen:

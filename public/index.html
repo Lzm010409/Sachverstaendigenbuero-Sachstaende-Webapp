@@ -3,46 +3,70 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#2F6DB3" media="(prefers-color-scheme: light)" />
-<meta name="theme-color" content="#191F27" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#3B4CC0" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#2A3042" media="(prefers-color-scheme: dark)" />
 <title>Sachstands-Cockpit</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232F6DB3'/%3E%3Ctext x='16' y='22' font-family='Segoe UI,Arial' font-size='14' font-weight='700' fill='white' text-anchor='middle'%3EGS%3C/text%3E%3C/svg%3E" />
 <style>
+  /*
+   * Farbschema in Anlehnung an Skote: Indigo als Akzent, kühle Blaugrau-Flächen.
+   *
+   * Bindende Vorgabe, keine Geschmacksfrage: Jede Textfarbe erreicht auf jeder
+   * Fläche, auf der sie vorkommt, mindestens 4,5:1 nach WCAG 2.1 — auch
+   * --text-faint, das bei 11-12 px für Beschriftungen und Datumsangaben
+   * verwendet wird. Die Vorgängerfassung lag dort bei 3,59:1; das bestand die
+   * Norm formal (unter 3:1 nur für große Schrift), war bei dieser Schriftgröße
+   * im Dunkelmodus aber schlicht nicht lesbar.
+   *
+   * Wer hier Werte ändert, prüft sie vorher nach — sonst kehrt genau das
+   * zurück. Verhältnis = (heller+0,05)/(dunkler+0,05) über die relative
+   * Leuchtdichte.
+   */
   :root {
-    --bg: #F5F7FA; --surface: #FFFFFF; --surface-2: #EEF1F6; --surface-3: #E5EAF1;
-    --border: #DCE2EA; --border-strong: #C7D0DB; --text: #1A2028; --text-muted: #5C6673;
-    --text-faint: #8A94A2; --accent: #2F6DB3; --accent-soft: #E7EFF9; --accent-ink: #FFFFFF;
-    --critical: #BC4630; --critical-soft: #F8E7E2; --warn: #9C6A12; --warn-soft: #F6EED9;
-    --ok: #37855A; --ok-soft: #E3F1E9;
-    --shadow: 0 1px 2px rgba(20,30,45,.04), 0 8px 24px rgba(20,30,45,.06);
+    --bg: #F5F6FA; --surface: #FFFFFF; --surface-2: #F0F2F9; --surface-3: #E4E8F4;
+    --border: #DCE0EE; --border-strong: #BFC6DC; --text: #191D28; --text-muted: #4F5668;
+    --text-faint: #5F6679; --accent: #3B4CC0; --accent-soft: #E9ECFB; --accent-ink: #FFFFFF;
+    --critical: #B93A34; --critical-soft: #FBE9E8; --warn: #7E5209; --warn-soft: #FAEFD6;
+    --ok: #136D52; --ok-soft: #E0F3ED;
+    --shadow: 0 1px 2px rgba(25,29,40,.05), 0 8px 24px rgba(25,29,40,.07);
     --radius: 10px; --radius-sm: 7px;
     --font-ui: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
     --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, "SFMono-Regular", monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #10141A; --surface: #191F27; --surface-2: #212832; --surface-3: #2A323D;
-      --border: #2B333F; --border-strong: #3A4552; --text: #E7ECF2; --text-muted: #9AA5B3;
-      --text-faint: #6B7684; --accent: #5E9BE0; --accent-soft: #1E2A3A; --accent-ink: #0E1620;
-      --critical: #E07A5F; --critical-soft: #33211D; --warn: #D6A63C; --warn-soft: #302912;
-      --ok: #61B187; --ok-soft: #17281F;
-      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+      --bg: #222736; --surface: #2A3042; --surface-2: #323A4F; --surface-3: #3C4560;
+      --border: #3E4763; --border-strong: #556080; --text: #F6F7FB; --text-muted: #BCC6E0;
+      --text-faint: #9BA7C6; --accent: #98A5F9; --accent-soft: #2E3555; --accent-ink: #141828;
+      --critical: #FA9C9C; --critical-soft: #3C2830; --warn: #F7CA74; --warn-soft: #3B3320;
+      --ok: #5DD9AA; --ok-soft: #1E3B32;
+      --shadow: 0 1px 2px rgba(0,0,0,.28), 0 10px 30px rgba(0,0,0,.32);
     }
   }
   :root[data-theme="light"] {
-    --bg: #F5F7FA; --surface: #FFFFFF; --surface-2: #EEF1F6; --surface-3: #E5EAF1;
-    --border: #DCE2EA; --border-strong: #C7D0DB; --text: #1A2028; --text-muted: #5C6673;
-    --text-faint: #8A94A2; --accent: #2F6DB3; --accent-soft: #E7EFF9; --accent-ink: #FFFFFF;
-    --critical: #BC4630; --critical-soft: #F8E7E2; --warn: #9C6A12; --warn-soft: #F6EED9;
-    --ok: #37855A; --ok-soft: #E3F1E9; --shadow: 0 1px 2px rgba(20,30,45,.04), 0 8px 24px rgba(20,30,45,.06);
+    --bg: #F5F6FA; --surface: #FFFFFF; --surface-2: #F0F2F9; --surface-3: #E4E8F4;
+    --border: #DCE0EE; --border-strong: #BFC6DC; --text: #191D28; --text-muted: #4F5668;
+    --text-faint: #5F6679; --accent: #3B4CC0; --accent-soft: #E9ECFB; --accent-ink: #FFFFFF;
+    --critical: #B93A34; --critical-soft: #FBE9E8; --warn: #7E5209; --warn-soft: #FAEFD6;
+    --ok: #136D52; --ok-soft: #E0F3ED;
+    --shadow: 0 1px 2px rgba(25,29,40,.05), 0 8px 24px rgba(25,29,40,.07);
   }
   :root[data-theme="dark"] {
-    --bg: #10141A; --surface: #191F27; --surface-2: #212832; --surface-3: #2A323D;
-    --border: #2B333F; --border-strong: #3A4552; --text: #E7ECF2; --text-muted: #9AA5B3;
-    --text-faint: #6B7684; --accent: #5E9BE0; --accent-soft: #1E2A3A; --accent-ink: #0E1620;
-    --critical: #E07A5F; --critical-soft: #33211D; --warn: #D6A63C; --warn-soft: #302912;
-    --ok: #61B187; --ok-soft: #17281F; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    --bg: #222736; --surface: #2A3042; --surface-2: #323A4F; --surface-3: #3C4560;
+    --border: #3E4763; --border-strong: #556080; --text: #F6F7FB; --text-muted: #BCC6E0;
+    --text-faint: #9BA7C6; --accent: #98A5F9; --accent-soft: #2E3555; --accent-ink: #141828;
+    --critical: #FA9C9C; --critical-soft: #3C2830; --warn: #F7CA74; --warn-soft: #3B3320;
+    --ok: #5DD9AA; --ok-soft: #1E3B32;
+    --shadow: 0 1px 2px rgba(0,0,0,.28), 0 10px 30px rgba(0,0,0,.32);
   }
+
+  /* Dem Browser das Schema mitteilen. Ohne diese Angabe verwendet er für
+     Bedienelemente, Rollbalken und Textfelder weiter die hellen
+     Systemvorgaben, während unsere Variablen schon dunkel sind — daraus
+     entstehen schwarze Schrift auf dunklem Grund und weiße Rollbalken. */
+  :root { color-scheme: light dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
 
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -76,10 +100,20 @@
   .filters button.active { background: var(--text); color: var(--surface); border-color: var(--text); }
   .list { overflow-y: auto; flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 
-  .case { text-align: left; width: 100%; font: inherit; cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--stripe, var(--border-strong)); border-radius: var(--radius-sm); padding: 11px 13px; display: flex; flex-direction: column; gap: 7px; transition: border-color .12s, background .12s; }
+  /* color: var(--text) ist Pflicht, nicht Kosmetik. Ohne die Angabe erbt das
+     <button> keine Textfarbe, sondern nimmt die Vorgabe des Browsers für
+     Schaltflächen — gemessen rgb(0,0,0). Auf dunklem Grund ergab das 1,6:1;
+     die Fallnamen in der Liste waren praktisch schwarz auf dunkelblau. */
+  .case { text-align: left; width: 100%; font: inherit; color: var(--text); cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--stripe, var(--border-strong)); border-radius: var(--radius-sm); padding: 11px 13px; display: flex; flex-direction: column; gap: 7px; transition: border-color .12s, background .12s; }
   .case:hover { border-color: var(--border-strong); background: var(--surface-2); }
   .case.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
-  .case.done { opacity: .5; }
+  /* Erledigte Fälle sollen zurücktreten, aber lesbar bleiben: Sie stehen nach
+     der Freigabe noch Stunden in der Liste, damit nachvollziehbar ist, was
+     gerade bearbeitet wurde. Mit opacity: .5 fiel der Name auf 1,6:1 — die
+     Dämpfung übernehmen jetzt Fläche und Textfarbe statt Transparenz. */
+  .case.done { background: var(--surface-2); border-left-color: var(--border-strong); }
+  .case.done .name { color: var(--text-muted); font-weight: 600; }
+  .case.done .az, .case.done .recip { color: var(--text-faint); }
   .case .row1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .case .az { font-size: 12px; color: var(--text-muted); }
   .case .name { font-weight: 640; font-size: 14px; letter-spacing: -.1px; }
@@ -216,7 +250,7 @@
   .erg { display: flex; gap: 11px; padding: 11px 16px; border-bottom: 1px solid var(--border); align-items: flex-start; }
   .erg:last-child { border-bottom: 0; }
   .erg .mark { font-size: 14px; line-height: 1.45; width: 16px; flex: none; text-align: center; }
-  .erg.ok .mark { color: var(--ok, #3fb950); }
+  .erg.ok .mark { color: var(--ok); }
   .erg.warn .mark { color: var(--warn); }
   .erg.neutral .mark { color: var(--text-faint); }
   .erg .et { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; font-weight: 650; color: var(--text-faint); }

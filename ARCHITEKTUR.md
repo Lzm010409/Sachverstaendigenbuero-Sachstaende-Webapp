@@ -260,3 +260,18 @@ bleibt in beiden Fällen offen — der Healthcheck des Containers braucht ihn.
 - **Rasterlayout.** In CSS-Grid braucht eine Spalte `minmax(0, 1fr)` und `min-width: 0`,
   sonst werden Inhalte abgeschnitten. Rein numerische Tests haben das nicht gefunden,
   weil `overflow-x: hidden` den Fehler verdeckte — sichtbar wurde er erst im Screenshot.
+- **`<button>` erbt keine Textfarbe.** Ohne ausdrückliches `color` nimmt es die Vorgabe
+  des Browsers für Schaltflächen — gemessen `rgb(0,0,0)`. Die Fallnamen in der Liste
+  waren dadurch im Dunkelmodus schwarz auf dunkelblau (1,6:1). Dazu gehört
+  `color-scheme: light dark` auf `:root`: Ohne diese Angabe verwendet der Browser für
+  Bedienelemente, Rollbalken und Textfelder weiter die hellen Systemvorgaben, während
+  die eigenen Variablen längst dunkel sind.
+- **Farben nicht nach Gefühl ändern.** Jede Textfarbe muss auf jeder Fläche, auf der
+  sie vorkommt, mindestens 4,5:1 erreichen — auch `--text-faint`, das bei 11–12 px für
+  Beschriftungen und Datumsangaben verwendet wird. Eine Tabelle der Variablen genügt
+  als Nachweis **nicht**: Der Fehler oben stand in keiner Variable, sondern entstand
+  erst beim Rendern. Gemessen wird deshalb im Browser über alle sichtbaren
+  Textelemente gegen ihren tatsächlichen Hintergrund.
+- **Dämpfen nie über `opacity`.** `.case.done` hatte `opacity: .5`; der Name fiel damit
+  auf 1,6:1, obwohl gerade freigegebene Fälle noch Stunden lesbar bleiben sollen.
+  Zurückhaltung über Flächen- und Textfarbe herstellen.

@@ -154,7 +154,8 @@ async function runOnce({ today = new Date() } = {}) {
                 used: true, model: out.model, kategorie: out.kategorie,
                 einschaetzung: out.einschaetzung, schwerpunkt: out.schwerpunkt,
                 anfrageSinnvoll: out.anfrage_sinnvoll !== false,
-                hinweisWennUnpassend: out.grund_wenn_unpassend || null
+                hinweisWennUnpassend: out.grund_wenn_unpassend || null,
+                usage: out.usage || null
               };
             } else {
               // Prüfschritt hat angeschlagen: Baukasten behalten, Grund festhalten.
@@ -270,6 +271,32 @@ async function runOnce({ today = new Date() } = {}) {
     }).map(c => { const { __ctx, ...rest } = c; return rest; });
 
     const state = store.load();
+    // Tokenverbrauch des Laufs aufsummieren, damit die Kosten nachvollziehbar sind.
+    // Preise Sonnet 5 (Einführungspreis): 2 $ / 10 $ je Mio. Token; gecachte
+    // Eingabe kostet ein Zehntel.
+    const spend = fresh.reduce((acc, c) => {
+      const u = c.ai && c.ai.used && !c.ai.reused ? c.ai.usage : null;
+      if (!u) return acc;
+      acc.inNeu += u.input_tokens || 0;
+      acc.inCacheWrite += u.cache_creation_input_tokens || 0;
+      acc.inCacheRead += u.cache_read_input_tokens || 0;
+      acc.out += u.output_tokens || 0;
+      acc.calls += 1;
+      return acc;
+    }, { inNeu: 0, inCacheWrite: 0, inCacheRead: 0, out: 0, calls: 0 });
+    const IN = Number(process.env.PREIS_INPUT_USD_PRO_MIO || 2);
+    const OUT = Number(process.env.PREIS_OUTPUT_USD_PRO_MIO || 10);
+    spend.usd = Number((
+      (spend.inNeu / 1e6) * IN
+      + (spend.inCacheWrite / 1e6) * IN * 1.25
+      + (spend.inCacheRead / 1e6) * IN * 0.1
+      + (spend.out / 1e6) * OUT
+    ).toFixed(4));
+    if (spend.calls) {
+      console.log(`[ai] ${spend.calls} Entwürfe erzeugt, geschätzte Kosten ${spend.usd.toFixed(4)} USD`
+        + ` (Cache gelesen: ${spend.inCacheRead} Token)`);
+    }
+
     store.mergeCases(state, fresh);
     const pending = store.pendingCount(state);
     state.lastRun = startedAt;
@@ -279,6 +306,7 @@ async function runOnce({ today = new Date() } = {}) {
       drafts: fresh.filter(c => c.needsDraft).length,
       skipped: fresh.filter(c => !c.needsDraft).length,
       mailErrors: fresh.filter(c => c.mailError).length,
+      aiSpend: spend,
       errors: errors.slice(0, 5),
       pending
     };

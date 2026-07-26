@@ -6,11 +6,13 @@
 
   const STATUS_LABEL = {
     faellig: "Fällig", ueberfaellig: "Überfällig", rueckfrage: "Rückfrage offen",
-    reguliert: "Reguliert", unklar: "Empfänger unklar", sent: "Gesendet", skipped: "Übersprungen"
+    reguliert: "Reguliert", unklar: "Empfänger unklar", sent: "Freigegeben", skipped: "Übersprungen",
+    abwarten: "Abwarten", bereits_angefragt: "Bereits angefragt"
   };
   const STRIPE = {
     faellig: "var(--accent)", ueberfaellig: "var(--critical)", rueckfrage: "var(--warn)",
-    reguliert: "var(--ok)", unklar: "var(--border-strong)"
+    reguliert: "var(--ok)", unklar: "var(--border-strong)",
+    abwarten: "var(--warn)", bereits_angefragt: "var(--ok)"
   };
 
   const listEl = document.getElementById("list");
@@ -75,7 +77,7 @@
         `<div class="name">${esc(c.name)}</div>` +
         `<div class="recip">${recip}</div>` +
         `<div class="row3"><span class="wait">${waitTxt}</span>` +
-        `<span class="wait">fällig ${esc(c.due)}</span></div>`;
+        `<span class="wait">fällig ${esc(c.dueDE || c.due)}</span></div>`;
       btn.addEventListener("click", () => selectCase(c.id));
       listEl.appendChild(btn);
     });
@@ -86,7 +88,9 @@
     if (c.insurer) cells.push(["Versicherung", esc(c.insurer)]);
     if (c.schadenNr) cells.push(["Schaden-Nr.", `<span class="mono">${esc(c.schadenNr)}</span>`]);
     if (c.vertragNr) cells.push(["Vertrags-Nr.", `<span class="mono">${esc(c.vertragNr)}</span>`]);
-    cells.push(["Fällig am", esc(c.due)]);
+    if (c.kennzeichen) cells.push(["Kennzeichen", `<span class="mono">${esc(c.kennzeichen)}</span>`]);
+    cells.push(["Fällig am", esc(c.dueDE || c.due)]);
+    if (c.pipedriveUrl) cells.push(["Pipedrive", `<a href="${esc(c.pipedriveUrl)}" target="_blank" rel="noopener" style="color:var(--accent)">Deal öffnen ↗</a>`]);
     return cells.map(([k, v]) => `<div class="cell"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
   }
 
@@ -125,9 +129,10 @@
       const toLine = `<div class="draft-to"><span class="lbl">An</span>` +
         `<span class="addr mono">${esc(c.recipEmail)}</span>` +
         (c.recipPerson ? `<span class="pill">${esc(c.recipPerson)}</span>` : "") +
-        `<span class="pill">${esc(c.recipOrg)}</span></div>`;
+        `<span class="pill">${esc(c.recipOrg)}</span>` +
+        (c.recipSource ? `<span class="pill" title="Woher die Adresse stammt">${esc(c.recipSource)}</span>` : "") + `</div>`;
       const subj = `<div class="draft-to"><span class="lbl">Betreff</span>` +
-        `<span class="addr">Sachstand ${esc(c.name)} · [Az. ${esc(c.token)}]</span></div>`;
+        `<span class="addr">${esc(c.subject || ("Sachstandsanfrage · " + (c.name || "") + (c.token ? " · [Az. " + c.token + "]" : "")))}</span></div>`;
       draftSection =
         `<div class="card"><div class="card-head"><span class="h">${c.isRueckfrage ? "Antwort-Entwurf" : "Anfrage-Entwurf"}</span>` +
         `<span class="badge">${c.du ? "Du-Anrede (Anrede-Regeln)" : "Sie-Anrede"}</span></div>` +
@@ -265,10 +270,33 @@
     document.documentElement.setAttribute("data-theme", isDark ? "light" : "dark");
   });
 
+  const refreshBtn = document.getElementById("refreshBtn");
+  if (refreshBtn) refreshBtn.addEventListener("click", async () => {
+    refreshBtn.disabled = true; refreshBtn.textContent = "…";
+    try {
+      const r = await api("/api/refresh", { method: "POST" });
+      toast("info", "Aktualisiert", r.summary
+        ? `${r.summary.drafts || 0} Entwürfe, ${r.summary.skipped || 0} übersprungen (${r.summary.dueTasks || 0} fällig)`
+        : "Neu geladen.");
+      await init();
+    } catch (e) { toast("err", "Aktualisieren fehlgeschlagen", esc(e.message)); }
+    finally { refreshBtn.disabled = false; refreshBtn.textContent = "⟳"; }
+  });
+
+  function showRunInfo(cfg) {
+    const el = document.getElementById("runInfo");
+    if (!el) return;
+    if (cfg.demoMode) { el.textContent = "Demo-Modus"; return; }
+    const t = cfg.lastRun ? new Date(cfg.lastRun).toLocaleString("de-DE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }) : "—";
+    const s = cfg.lastRunSummary || {};
+    el.textContent = `Letzter Lauf ${t} · ${s.drafts || 0} Entwürfe · ${s.skipped || 0} übersprungen`;
+  }
+
   async function init() {
     try {
       const cfg = await api("/api/config").catch(() => ({ demoMode: true }));
-      if (cfg.demoMode) demoBadge.hidden = false;
+      demoBadge.hidden = !cfg.demoMode;
+      showRunInfo(cfg);
       const data = await api("/api/cases");
       CASES = data.cases || [];
       renderKpis();

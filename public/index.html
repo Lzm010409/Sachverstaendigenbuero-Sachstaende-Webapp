@@ -91,6 +91,9 @@
   .chip.rueckfrage { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
   .chip.reguliert { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
   .chip.unklar { color: var(--text-muted); background: var(--surface-3); border-color: transparent; }
+  .chip.abwarten { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+  .chip.bereits_angefragt { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+  .chip.skipped { color: var(--text-muted); background: var(--surface-3); border-color: transparent; }
   .chip.sent { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
 
   .detail { overflow-y: auto; min-height: 0; padding: 22px 26px 40px; }
@@ -195,6 +198,7 @@
     </div>
     <div class="kpis" id="kpis"></div>
     <span class="badge-demo" id="demoBadge" hidden>Demo-Daten</span>
+    <button class="theme-toggle" id="refreshBtn" title="Jetzt neu aus Pipedrive laden" aria-label="Aktualisieren" style="width:auto;padding:0 12px;">⟳</button>
     <span class="date" id="today"></span>
     <button class="theme-toggle" id="themeBtn" title="Hell/Dunkel umschalten" aria-label="Theme umschalten">◐</button>
   </header>
@@ -203,6 +207,7 @@
     <section class="list-pane">
       <div class="list-head">
         <span class="title">Fällige Sachstände</span>
+        <span id="runInfo" style="font-size:11px;color:var(--text-faint);"></span>
         <div class="filters" id="filters">
           <button data-f="offen" class="active">Offen</button>
           <button data-f="ueberfaellig">Überfällig</button>

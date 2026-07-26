@@ -13,8 +13,11 @@ die Kurzfassung im `README.md`.
 
 Sie übernimmt die Vorarbeit für Sachstandsanfragen an Kanzleien und Versicherungen:
 
-1. **Alle 30 Minuten** sieht sie in Pipedrive nach fälligen Aufgaben, deren Betreff
-   mit „Sachstand anfragen" beginnt.
+1. **Einmal am Tag** (standardmäßig ab 7 Uhr) sieht sie in Pipedrive nach fälligen
+   Aufgaben, deren Betreff mit „Sachstand anfragen" beginnt. Sachstände sind
+   Tagesgeschäft — häufigeres Nachsehen brächte nichts und belastet nur das
+   Tageskontingent der Pipedrive-API. Der Knopf **⟳** löst jederzeit einen
+   sofortigen Lauf aus.
 2. Für jeden Fall liest sie **Deal, Notizen und den Mailverlauf** und beurteilt die
    Sachlage.
 3. Passt eine Nachfrage, schreibt sie einen **fertigen Entwurf** und legt ihn in die
@@ -162,7 +165,12 @@ protokolliert seine Kosten:
 
 ```
 [ai] 10 Entwürfe erzeugt, geschätzte Kosten 0.1095 USD (Cache gelesen: 36620 Token)
+[worker] Lauf fertig: 19 Fälle (0 unverändert übernommen), 112 Pipedrive-Aufrufe, 17 zur Freigabe.
 ```
+
+Die Pipedrive-API hat ein Tageskontingent. Mit einem Lauf am Tag liegt der
+Verbrauch bei rund 110 Abrufen — zuvor waren es bei halbstündlichen Läufen
+über 6000.
 
 Empfehlung: in der Anthropic-Console unter *Settings → Limits* ein Monatslimit
 setzen. Bei diesem Volumen wird es nie erreicht.

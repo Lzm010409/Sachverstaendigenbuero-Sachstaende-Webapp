@@ -407,18 +407,51 @@ async function maybeNotify(summary, pending) {
   }
 }
 
-/** Startet den periodischen Lauf. */
+/**
+ * Startet die Zeitsteuerung.
+ *
+ * Sachstände sind Tagesgeschäft: Ein voller Lauf am Tag genügt und kostet rund
+ * 110 Pipedrive-Aufrufe. Ein fester Abstand ab Prozessstart wäre ungeeignet —
+ * nach jedem Neustart verschöbe sich die Uhrzeit, im ungünstigen Fall mitten in
+ * die Nacht. Stattdessen wird viertelstündlich nur die Uhr geprüft (kostet
+ * nichts) und höchstens einmal am Tag ab LAUF_STUNDE wirklich gelaufen.
+ *
+ * Der Knopf „Aktualisieren" löst jederzeit einen sofortigen Lauf aus.
+ */
 function start() {
-  const minutes = Number(process.env.POLL_MINUTES || 120);
   if (!pd.hasToken()) {
     console.warn("[worker] PIPEDRIVE_API_TOKEN fehlt — Hintergrundlauf deaktiviert.");
     return;
   }
-  const tick = () => runOnce().catch(err => console.error("[worker] Lauf fehlgeschlagen:", err.message));
-  // Erster Lauf kurz nach dem Start, damit die App nicht leer wirkt.
-  setTimeout(tick, 4000);
-  setInterval(tick, Math.max(5, minutes) * 60 * 1000);
-  console.log(`[worker] Hintergrundlauf aktiv, alle ${minutes} Minuten.`);
+  const laufStunde = Number(process.env.LAUF_STUNDE || 7);
+  const taktMinuten = Number(process.env.TAKT_MINUTEN || 15);
+
+  const tick = async () => {
+    try {
+      const state = store.load();
+      const heute = digest.heuteISO(new Date());
+      const stunde = new Date().getHours();
+
+      if (state.laufGemachtAm !== heute && stunde >= laufStunde) {
+        await runOnce();
+        const nachher = store.load();
+        nachher.laufGemachtAm = heute;
+        store.save(nachher);
+      } else {
+        // Kein Lauf fällig — die Übersichtsmail hat eine eigene Uhrzeit und
+        // wird deshalb trotzdem geprüft. Ohne Versand kostet das nichts.
+        const d = await digest.maybeSendDigest(state, store.listCases(state));
+        if (d.gesendet) store.save(state);
+      }
+    } catch (err) {
+      console.error("[worker] Lauf fehlgeschlagen:", err.message);
+    }
+  };
+
+  setTimeout(tick, 4000);                                   // kurz nach dem Start
+  setInterval(tick, Math.max(1, taktMinuten) * 60 * 1000);
+  console.log(`[worker] Ein Lauf pro Tag ab ${laufStunde} Uhr;`
+    + ` Prüftakt alle ${taktMinuten} Minuten (ohne Abrufe).`);
 }
 
 module.exports = { runOnce, start, isRunning: () => running, getLastError: () => lastError };

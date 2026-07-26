@@ -20,6 +20,7 @@
  */
 
 const path = require("path");
+const fs = require("fs");
 const express = require("express");
 
 const pd = require("./pipedrive");
@@ -226,7 +227,40 @@ function renderApprovalNote(c, body) {
 }
 
 // --- Frontend -------------------------------------------------------------
-app.use(express.static(path.join(__dirname, "..", "public")));
+// Die Startseite wird ausgeliefert, nachdem die Skript-Adresse mit einer
+// Version versehen wurde (Änderungszeit von app.js). Nach jedem Deployment
+// ändert sich damit die Adresse, und kein Browser kann eine alte Fassung
+// weiterverwenden — genau das hatte die Aufteilung zerrissen.
+const INDEX = path.join(__dirname, "..", "public", "index.html");
+function buildStempel() {
+  try {
+    const js = fs.statSync(path.join(__dirname, "..", "public", "app.js")).mtimeMs;
+    return String(Math.floor(js));
+  } catch { return String(Date.now()); }
+}
+app.get("/", (req, res, next) => {
+  try {
+    const html = fs.readFileSync(INDEX, "utf8")
+      .replace('src="/app.js"', `src="/app.js?v=${buildStempel()}"`);
+    res.setHeader("Cache-Control", "no-cache");
+    res.type("html").send(html);
+  } catch (err) { next(err); }
+});
+
+// Seite und Skript dürfen nicht im Browser-Cache festhängen: Nach einem
+// Deployment traf sonst altes app.js auf neues CSS, was die Aufteilung
+// zerriss (Blöcke ohne ihre Wrapper flossen wild ins Raster). "no-cache"
+// heißt nicht "nie zwischenspeichern", sondern "vor Benutzung nachfragen" —
+// unveränderte Dateien werden mit 304 beantwortet, kosten also kaum etwas.
+app.use(express.static(path.join(__dirname, "..", "public"), {
+  etag: true,
+  lastModified: true,
+  setHeaders(res, filePath) {
+    if (/\.(html|js|css)$/i.test(filePath)) {
+      res.setHeader("Cache-Control", "no-cache");
+    }
+  }
+}));
 
 app.use((err, _req, res, _next) => {
   console.error("[cockpit]", err.message);

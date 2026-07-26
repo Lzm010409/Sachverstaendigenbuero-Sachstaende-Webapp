@@ -493,8 +493,16 @@ function start() {
       } else {
         // Kein Lauf fällig — die Übersichtsmail hat eine eigene Uhrzeit und
         // wird deshalb trotzdem geprüft. Ohne Versand kostet das nichts.
-        const d = await digest.maybeSendDigest(state, store.listCases(state));
-        if (d.gesendet) store.save(state);
+        //
+        // Eigener Fehlerfang: Ist der Mailversand gestört (etwa weil die
+        // Graph-Berechtigung noch fehlt), darf das nicht den ganzen Takt
+        // abbrechen. Die Übersicht ist Beiwerk, der Lauf ist die Hauptsache.
+        try {
+          const d = await digest.maybeSendDigest(state, store.listCases(state));
+          if (d.gesendet) store.save(state);
+        } catch (err) {
+          console.warn("[digest] nicht versendet:", err.message);
+        }
       }
     } catch (err) {
       console.error("[worker] Lauf fehlgeschlagen:", err.message);

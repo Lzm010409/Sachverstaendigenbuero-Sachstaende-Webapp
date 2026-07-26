@@ -118,6 +118,10 @@
     .detail-inner { grid-template-columns: minmax(0, 1.15fr) minmax(380px, 1fr); }
     /* Entwurf bleibt beim Scrollen des Kontexts sichtbar. */
     .draftCol { position: sticky; top: 0; }
+    /* Steht dort kein Entwurf, sondern der Mailverlauf, wäre Kleben störend —
+       man will darin scrollen. Beide Spalten sind dann gleich breit. */
+    .detail-inner:has(> .draftCol.frei) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .draftCol.frei { position: static; }
     .draftCol textarea.editor { min-height: 320px; }
   }
   .dhead { display: flex; flex-direction: column; gap: 9px; }

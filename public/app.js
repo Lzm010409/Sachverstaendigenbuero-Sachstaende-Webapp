@@ -178,6 +178,13 @@
     ).join("") + `</div>`;
   }
 
+  function mailkarte(c) {
+    const n = (c.thread || []).length;
+    return `<div class="card"><div class="card-head"><span class="h">Mailverlauf</span>` +
+      `<span class="badge">${n} Nachricht${n === 1 ? "" : "en"}</span></div>` +
+      threadHtml(c) + `</div>`;
+  }
+
   function notizenHtml(c) {
     const n = c.notizen || [];
     if (!n.length) return "";
@@ -223,7 +230,10 @@
         `<div class="b">${esc(c.ai.einschaetzung || "")}` +
         (c.ai.schwerpunkt ? `<br><span style="color:var(--text-muted);font-size:12.5px;">Schwerpunkt: ${esc(c.ai.schwerpunkt)}</span>` : "") +
         (c.ai.anfrageSinnvoll === false ? `<br><b style="color:var(--warn)">Anfrage hier unpassend:</b> ${esc(c.ai.hinweisWennUnpassend || "")}` : "") +
-        `</div></div>`;
+        // Drei schließende Tags: .b, der Textrahmen und .callout selbst. Fehlte
+        // das letzte, zog der Flex-Container alle folgenden Karten in sich
+        // hinein — sie standen dann neben der Einschätzung statt darunter.
+        `</div></div></div>`;
     } else if (c.ai && c.ai.problems && c.ai.problems.length) {
       aiBlock =
         `<div class="callout warn"><div class="ic">!</div><div><div class="t">KI-Entwurf verworfen</div>` +
@@ -279,11 +289,13 @@
       `<div class="t">${esc(cTitle)}</div><div class="b">${esc(cBody)}</div></div></div>` +
       aiBlock +
       notizenHtml(c) +
-      `<div class="card"><div class="card-head"><span class="h">Mailverlauf</span>` +
-      `<span class="badge">${(c.thread || []).length} Nachricht${(c.thread || []).length === 1 ? "" : "en"}</span></div>` +
-      threadHtml(c) + `</div>` +
+      // Gibt es keinen Entwurf, stünde die rechte Spalte leer. Dann wandert der
+      // Mailverlauf dorthin: Notizen links, Korrespondenz rechts, beide in
+      // voller Breite statt zusammengedrängt in einer Hälfte.
+      (c.draft ? mailkarte(c) : "") +
       `</div>` +                       /* .ctx zu */
-      `<div class="draftCol">` + draftSection + `</div>` +
+      `<div class="draftCol${c.draft ? "" : " frei"}">` +
+      (c.draft ? draftSection : mailkarte(c)) + `</div>` +
       `</div>`;
 
     wireDetail(c);

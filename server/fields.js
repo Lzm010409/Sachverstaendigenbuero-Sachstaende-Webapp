@@ -13,6 +13,10 @@
 const BASE = "https://api.pipedrive.com/v1";
 
 let cache = null;      // { byName: Map<string, key>, loadedAt: number }
+// Vier Fälle werden parallel verarbeitet und liefen beim Start alle in den
+// leeren Cache — also vier identische Abrufe. Ein gemeinsames Versprechen
+// sorgt dafür, dass nur der erste wirklich lädt.
+let inFlight = null;
 const TTL_MS = 60 * 60 * 1000;
 
 function norm(s) {
@@ -21,18 +25,22 @@ function norm(s) {
 
 async function loadFields() {
   if (cache && Date.now() - cache.loadedAt < TTL_MS) return cache;
-  const token = process.env.PIPEDRIVE_API_TOKEN;
-  if (!token) return { byName: new Map(), loadedAt: Date.now() };
+  if (inFlight) return inFlight;                 // ein laufender Abruf genügt
+  inFlight = (async () => {
+    const token = process.env.PIPEDRIVE_API_TOKEN;
+    if (!token) return { byName: new Map(), loadedAt: Date.now() };
 
-  const res = await fetch(`${BASE}/dealFields?limit=500&api_token=${encodeURIComponent(token)}`);
-  const json = await res.json().catch(() => null);
-  const list = (json && json.data) || [];
-  const byName = new Map();
-  for (const f of list) {
-    if (f && f.key && f.name) byName.set(norm(f.name), { key: f.key, type: f.field_type });
-  }
-  cache = { byName, loadedAt: Date.now() };
-  return cache;
+    const res = await fetch(`${BASE}/dealFields?limit=500&api_token=${encodeURIComponent(token)}`);
+    const json = await res.json().catch(() => null);
+    const list = (json && json.data) || [];
+    const byName = new Map();
+    for (const f of list) {
+      if (f && f.key && f.name) byName.set(norm(f.name), { key: f.key, type: f.field_type });
+    }
+    cache = { byName, loadedAt: Date.now() };
+    return cache;
+  })().finally(() => { inFlight = null; });
+  return inFlight;
 }
 
 /** Wert eines Feldes anhand seines Anzeigenamens (mehrere Schreibweisen möglich). */

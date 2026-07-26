@@ -18,6 +18,21 @@ const TOKEN = process.env.PIPEDRIVE_API_TOKEN || "";
 const OWN_DOMAINS = (process.env.OWN_MAIL_DOMAINS || "gollenstede-sachverstand.de")
   .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 
+// --- Sparmaßnahmen für das Tages-Kontingent der Pipedrive-API -------------
+// Ein Lauf holte zuvor für jeden Fall alles neu. Drei Dinge lassen sich
+// gefahrlos zwischenspeichern:
+//   Organisationen  — ändern sich selten, und viele Fälle teilen dieselbe Kanzlei
+//   Mail-Volltexte  — eine gesendete Nachricht ändert sich nie mehr
+// Das Zählwerk macht den Verbrauch im Lauf-Protokoll sichtbar.
+const ORG_TTL_MS = Number(process.env.ORG_CACHE_STUNDEN || 24) * 3600 * 1000;
+const orgCache = new Map();     // orgId -> { org, at }
+const mailBodyCache = new Map(); // messageId -> body (unveränderlich)
+let requestCount = 0;
+
+/** Zähler für ein Lauf-Protokoll: liefert den Verbrauch und setzt zurück. */
+function takeRequestCount() { const n = requestCount; requestCount = 0; return n; }
+function cacheStats() { return { organisationen: orgCache.size, mailtexte: mailBodyCache.size }; }
+
 function assertToken() {
   if (!TOKEN) throw new Error("PIPEDRIVE_API_TOKEN ist nicht gesetzt.");
 }
@@ -30,6 +45,7 @@ async function pd(path, { method = "GET", body, query } = {}) {
   });
   url.searchParams.set("api_token", TOKEN);
 
+  requestCount++;
   const res = await fetch(url, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -77,7 +93,15 @@ async function getPerson(personId) {
 }
 
 async function getOrganization(orgId) {
-  try { return await pd(`/organizations/${orgId}`); } catch { return null; }
+  // Viele Fälle verweisen auf dieselbe Kanzlei — ohne Cache wurde sie je Fall
+  // erneut geladen.
+  const hit = orgCache.get(orgId);
+  if (hit && Date.now() - hit.at < ORG_TTL_MS) return hit.org;
+  let org = null;
+  try { org = await pd(`/organizations/${orgId}`); } catch { org = null; }
+  // Auch ein Fehlschlag wird vermerkt, sonst wird es in jedem Lauf erneut versucht.
+  orgCache.set(orgId, { org, at: Date.now() });
+  return org;
 }
 
 /**
@@ -110,11 +134,17 @@ async function getDealMails(dealId, { limit = 15, withBody = 4 } = {}) {
   }));
 
   // Volltext nur für die neuesten Nachrichten — hält die Laufzeit klein.
+  // Eine bereits gesendete oder empfangene Nachricht ändert sich nicht mehr.
+  // Ihr Volltext wird deshalb dauerhaft behalten — das war der größte Posten
+  // im Tagesverbrauch (45 von 127 Aufrufen je Lauf).
   await Promise.all(mails.slice(0, withBody).map(async (mail) => {
+    const cached = mailBodyCache.get(mail.id);
+    if (cached !== undefined) { mail.body = cached; return; }
     try {
       const full = await pd(`/mailbox/mailMessages/${mail.id}`, { query: { include_body: 1 } });
       const d = full && full.data ? full.data : full;
       mail.body = htmlToText((d && d.body) || "");
+      mailBodyCache.set(mail.id, mail.body);
     } catch { /* Body ist optional — snippet genügt als Rückfall */ }
   }));
 
@@ -166,6 +196,7 @@ function htmlToText(html) {
 }
 
 module.exports = {
+  takeRequestCount, cacheStats,
   getOpenTasks, getDealTasks, getDeal, getNotes, getPerson, getOrganization,
   getDealMails, addNote, getOrgPersons, htmlToText, isOurs, OWN_DOMAINS,
   hasToken: () => Boolean(TOKEN)

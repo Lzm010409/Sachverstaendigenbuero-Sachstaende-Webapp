@@ -50,7 +50,13 @@ async function mapLimited(items, limit, fn) {
 }
 
 /** Ein Durchlauf: fällige Tasks → Analyse → Entwürfe → Warteschlange. */
-async function runOnce({ today = new Date() } = {}) {
+/**
+ * Ein Lauf.
+ * @param force  true = alle Fälle neu von Pipedrive laden (Knopf „Aktualisieren").
+ *               Sonst werden Fälle übersprungen, die kürzlich analysiert wurden —
+ *               das spart den größten Teil des Tages-Kontingents der API.
+ */
+async function runOnce({ today = new Date(), force = false } = {}) {
   if (running) return { skipped: "läuft bereits" };
   running = true;
   const startedAt = new Date().toISOString();
@@ -70,7 +76,24 @@ async function runOnce({ today = new Date() } = {}) {
       store.listCases(store.load()).filter(c => c.token).map(c => [c.token, c])
     );
 
+    // Wiedervorlage-Fenster: Ein Fall, der vor weniger als FALL_TTL_STUNDEN
+    // analysiert wurde und auf eine Entscheidung wartet, wird unverändert
+    // übernommen — ohne einen einzigen Pipedrive-Aufruf. Neue Post fällt beim
+    // nächsten Ablauf des Fensters auf; der Knopf „Aktualisieren" erzwingt sofort.
+    const FALL_TTL_MS = Number(process.env.FALL_TTL_STUNDEN || 8) * 3600 * 1000;
+    let wiederverwendet = 0;
+
     const results = await mapLimited(selected, CONCURRENCY, async (task) => {
+      const tokenVorab = (String(task.subject || "").match(/\d{4}\/\d{3,4}TG/) || [])[0];
+      if (!force && tokenVorab) {
+        const bekannt = priorByToken.get(tokenVorab);
+        const frisch = bekannt && bekannt.analyzedAt
+          && (Date.now() - Date.parse(bekannt.analyzedAt)) < FALL_TTL_MS;
+        if (bekannt && frisch && !bekannt.decision) {
+          wiederverwendet++;
+          return bekannt;                     // unverändert übernehmen
+        }
+      }
       const [deal, notes, mailRes] = await Promise.all([
         pd.getDeal(task.deal_id),
         pd.getNotes(task.deal_id),
@@ -88,6 +111,11 @@ async function runOnce({ today = new Date() } = {}) {
 
       const analysis = analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today });
       const token = analysis.token || extractToken(deal && deal.title);
+
+      // Fingerabdruck des Falls — muss VOR der Kostenbremse stehen, die ihn
+      // mit dem gespeicherten Stand vergleicht.
+      const newestMailTime = mails.length ? mails[0].time : "";
+      const fingerprint = [newestMailTime, mails.length, notes.length, task.due_date].join("|");
 
       let draft = null;
       let aiInfo = null;
@@ -170,8 +198,6 @@ async function runOnce({ today = new Date() } = {}) {
       }
 
       // Fingerprint: erkennt neue Korrespondenz/Notizen am Fall.
-      const newestMailTime = mails.length ? mails[0].time : "";
-      const fingerprint = [newestMailTime, mails.length, notes.length, task.due_date].join("|");
 
       return {
         id: `task-${task.id}`,
@@ -307,9 +333,14 @@ async function runOnce({ today = new Date() } = {}) {
       skipped: fresh.filter(c => !c.needsDraft).length,
       mailErrors: fresh.filter(c => c.mailError).length,
       aiSpend: spend,
+      apiAufrufe: pd.takeRequestCount(),
+      wiederverwendet,
       errors: errors.slice(0, 5),
       pending
     };
+    console.log(`[worker] Lauf fertig: ${state.lastRunSummary.analyzed} Fälle`
+      + ` (${wiederverwendet} unverändert übernommen), ${state.lastRunSummary.apiAufrufe} Pipedrive-Aufrufe,`
+      + ` ${pending} zur Freigabe.`);
     store.save(state);
     lastError = null;
 
@@ -366,7 +397,7 @@ async function maybeNotify(summary, pending) {
 
 /** Startet den periodischen Lauf. */
 function start() {
-  const minutes = Number(process.env.POLL_MINUTES || 30);
+  const minutes = Number(process.env.POLL_MINUTES || 120);
   if (!pd.hasToken()) {
     console.warn("[worker] PIPEDRIVE_API_TOKEN fehlt — Hintergrundlauf deaktiviert.");
     return;

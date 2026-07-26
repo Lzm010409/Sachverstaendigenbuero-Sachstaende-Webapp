@@ -124,7 +124,8 @@ app.get("/api/cases", (_req, res, next) => {
 app.post("/api/refresh", async (_req, res, next) => {
   try {
     if (DEMO_MODE) return res.json({ ok: true, demo: true, note: "Demo-Modus — kein Abruf nötig." });
-    const summary = await worker.runOnce();
+    // Vom Nutzer angefordert: alles frisch laden, Fall-Fenster übergehen.
+    const summary = await worker.runOnce({ force: true });
     res.json({ ok: true, summary });
   } catch (err) { next(err); }
 });

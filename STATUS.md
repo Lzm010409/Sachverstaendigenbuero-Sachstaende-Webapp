@@ -86,6 +86,39 @@ STATUS.md         diese Datei
 
 ---
 
+## 3b. Pipedrive-Anbindung — was gilt (WICHTIG für Änderungen)
+
+Der Hintergrundlauf (`server/worker.js`, Intervall `POLL_MINUTES`) macht alles
+selbstständig: fällige Aufgaben holen → Notizen + Mails auswerten → Entwurf bauen →
+in die Freigabe-Warteschlange legen. Nach außen wird **nur bei Freigabe** geschrieben.
+
+**Datenquellen und ihre Eigenheiten — hart erarbeitet, bitte nicht „vereinfachen":**
+
+| Thema | Wie es funktioniert / Falle |
+|---|---|
+| Mails | `GET /deals/{id}/mailMessages`, Volltext über `/mailbox/mailMessages/{id}?include_body=1`. **Nicht** den n8n-Webhook nutzen: dessen aktiver Zweig sucht per `mailThreads?folder=inbox&subject=<Deal-Titel>` und verfehlt Verläufe. (Der brauchbare Zweig im Workflow `Wo5g71jsZEoEZTZN` ist nicht verdrahtet.) |
+| Custom-Felder | **Immer** über den Anzeigenamen auflösen (`server/fields.js`). Werteformat-Raten führte dazu, dass „Erste Zulassung" als Unfalldatum und das „Kennzeichen" als Schadennummer in Kundenmails landete. |
+| Unfalldatum | **Existiert in diesem Konto nicht als Feld.** Wird deshalb weggelassen — nicht ersatzweise ein anderes Datum verwenden. |
+| Empfänger | Deal-Feld **„Rechtsanwalt"** (Organisationsfeld → Org-ID) ist die belastbare Quelle. Adressen des Anspruchstellers sind ausgeschlossen (sonst ging die Anfrage an ihn selbst). |
+| Kanzlei-Adresse fehlt | `/persons?org_id=…` **funktioniert nicht** — Pipedrive ignoriert den Filter und liefert alle Personen. Stattdessen lernendes Verzeichnis (`server/directory.js`), das nur aus dem autoritativen Anwaltsfeld lernt. |
+| Dedup | Freigabe schreibt Notiz „✅ Sachstandsanfrage freigegeben"; diese wird beim nächsten Lauf gelesen. Pipedrive ist damit die Wahrheit — Redeploys legen nichts doppelt vor. |
+| Anrede | `DUZEN_LISTE`, schreibweisentolerant (Schloßmacher = Schlossmacher). Generische Postfachnamen (Service, Info, Kanzlei) gelten **nicht** als Person. |
+
+**Aufgaben-Betreffe** kommen in zwei Varianten vor: „Sachstand anfragen zu: X" und
+„Sachstand anfragen: X". Aktenzeichen-Format ist `MMYY/NNNNTG` (z. B. `0626/1973TG` =
+Juni 2026) — die ersten vier Stellen sind **Monat+Jahr**, nicht das Jahr.
+
+Stand des letzten Live-Tests: 25–27 fällige Fälle, ~19–21 Entwürfe,
+6 begründet übersprungen (reguliert/abwarten), 1 ohne Empfänger.
+
+**Offene Punkte:**
+- **Persistentes Volume** für `DATA_DIR=/data` ist in Coolify **noch nicht angelegt**
+  (API lehnte `type: volume|bind` ab — bitte einmal per UI: Application → Storages →
+  Add, Mount Path `/data`). Ohne Volume geht nur die lokale Warteschlange bei einem
+  Redeploy verloren; Freigaben bleiben dank Notiz-Dedup erhalten.
+- `ANTHROPIC_API_KEY` ist nicht gesetzt. „Ändern lassen" arbeitet dann deterministisch
+  (kürzt den Text). Mit Key übernimmt das Modell die Umformulierung (`server/draft.js`).
+
 ## 4. Nächste Schritte — Demo → Live
 
 Alle Nahtstellen sind in `server/index.js` mit `TODO(live)` markiert. Zu bauen:

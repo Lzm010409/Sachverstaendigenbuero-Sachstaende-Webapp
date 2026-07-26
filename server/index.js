@@ -241,11 +241,25 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
       await pd.addNote(c.dealId, noteHtml);
     } catch (err) {
       notizFehler = err.message;
+    }
+
+    // Weder Entwurf noch Notiz: Dann hinterlässt die Freigabe nirgends eine
+    // Spur, die einen Neustart überlebt. Lieber gar nicht vermerken — der Fall
+    // bleibt stehen und der Text ist weiter zum Kopieren da.
+    if (notizFehler && !(outlook && outlook.id)) {
+      return res.status(502).json({
+        error: `Pipedrive hat die Notiz nicht angenommen (${notizFehler})`
+          + ` und ein Outlook-Entwurf ist nicht eingerichtet — die Freigabe wäre nirgends`
+          + ` festgehalten. ${graph.missingHint()} Der Fall bleibt in der Liste.`
+      });
+    }
+
+    if (notizFehler) {
       state.offeneNotizen.push({
         dealId: c.dealId, token: c.token || null, content: noteHtml,
-        seit: new Date().toISOString(), versuche: 1, letzterFehler: err.message
+        seit: new Date().toISOString(), versuche: 1, letzterFehler: notizFehler
       });
-      console.warn(`[approve] Notiz am Deal ${c.dealId} vorgemerkt:`, err.message);
+      console.warn(`[approve] Notiz am Deal ${c.dealId} vorgemerkt:`, notizFehler);
     }
 
     store.setDecision(state, c.id, "approved",

@@ -38,6 +38,19 @@
   };
   function catLabel(id) { return CAT_LABELS[id] || id; }
 
+  // --- Ansichtssteuerung (nur am Handy wirksam; am Desktop stehen beide Spalten) ---
+  const appEl = document.querySelector(".app");
+  const mobileQuery = window.matchMedia("(max-width: 860px)");
+  function isMobile() { return mobileQuery.matches; }
+  function setView(view) {
+    appEl.setAttribute("data-view", view);
+    // Beim Wechsel oben beginnen, sonst erbt die neue Ansicht die alte Scrollposition.
+    const target = view === "detail" ? detailEl : listEl;
+    if (target) target.scrollTop = 0;
+  }
+  // Wird das Fenster breit (Tablet gedreht), ist die Aufteilung wieder zweispaltig.
+  mobileQuery.addEventListener("change", e => { if (!e.matches) setView("list"); });
+
   function esc(s) { return (s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
   async function api(path, opts) {
@@ -65,6 +78,15 @@
     const ueber = pending.filter(c => c.status === "ueberfaellig").length;
     const rueck = pending.filter(c => c.status === "rueckfrage").length;
     const done = CASES.length - pending.length;
+    const compact = document.getElementById("kpisCompact");
+    if (compact) {
+      compact.textContent = [
+        `${pending.length} zu prüfen`,
+        ueber ? `${ueber} überfällig` : "",
+        rueck ? `${rueck} Rückfrage${rueck === 1 ? "" : "n"}` : "",
+        done ? `${done} erledigt` : ""
+      ].filter(Boolean).join(" · ");
+    }
     kpisEl.innerHTML =
       `<div class="kpi"><b>${pending.length}</b><span>zu prüfen</span></div>` +
       `<div class="kpi crit"><b>${ueber}</b><span>überfällig</span></div>` +
@@ -121,8 +143,9 @@
     ).join("") + `</div>`;
   }
 
-  function selectCase(id) {
+  function selectCase(id, opts) {
     activeId = id;
+    if (isMobile() && !(opts && opts.keepView)) setView("detail");
     const c = CASES.find(x => x.id === id);
     renderList();
     if (!c) return;
@@ -279,6 +302,7 @@
     renderKpis();
     const next = CASES.find(x => x.id !== c.id && isPending(x) && visible(x));
     if (next) selectCase(next.id);
+    else if (isMobile()) { activeId = null; renderList(); setView("list"); }
     else { activeId = null; renderList(); detailEl.innerHTML = `<div class="empty">Alle Fälle in diesem Filter bearbeitet. 🎉<br><span style="font-size:12px;">Wechsle den Filter oben oder starte den nächsten Lauf.</span></div>`; }
     renderList();
   }
@@ -291,6 +315,9 @@
     toastsEl.appendChild(el);
     setTimeout(() => { el.style.transition = "opacity .3s, transform .3s"; el.style.opacity = "0"; el.style.transform = "translateY(6px)"; setTimeout(() => el.remove(), 320); }, 3600);
   }
+
+  const backBtn = document.getElementById("backBtn");
+  if (backBtn) backBtn.addEventListener("click", () => setView("list"));
 
   document.getElementById("filters").addEventListener("click", e => {
     const b = e.target.closest("button"); if (!b) return;
@@ -337,8 +364,9 @@
       CASES = data.cases || [];
       renderKpis();
       renderList();
+      setView(isMobile() ? "list" : "detail");
       const first = CASES.find(isPending) || CASES.find(c => visible(c));
-      if (first) selectCase(first.id);
+      if (first) selectCase(first.id, { keepView: true });
       else detailEl.innerHTML = `<div class="empty">Nichts zu prüfen. 🎉<br><span style="font-size:12px;">Erledigte Fälle über den Filter „Erledigt".</span></div>`;
     } catch (e) {
       detailEl.innerHTML = `<div class="empty">Fehler beim Laden: ${esc(e.message)}</div>`;

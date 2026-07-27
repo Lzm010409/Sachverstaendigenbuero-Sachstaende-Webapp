@@ -135,13 +135,21 @@ async function nacharbeiten({ jetzt = Date.now(), sofort = false } = {}) {
       // Jeder gelungene Schritt wird sofort abgehakt, damit ein Fehler im
       // zweiten Schritt den ersten nicht wiederholt — sonst entstünden bei
       // jedem Anlauf weitere Notizen am Deal.
+      // Der Fall selbst muss mitgeführt werden. Ohne das blieb in der
+      // Ergebniskarte für immer „Noch nicht angelegt" stehen, auch wenn die
+      // Notiz längst am Deal hing — die Warteschlange wusste Bescheid, der
+      // Fall nicht.
+      const fall = n.caseId ? state.cases[n.caseId] : null;
+
       if (n.notizHtml) {
         await pd.addNote(n.dealId, n.notizHtml);
         n.notizHtml = null;
+        if (fall) fall.notiz = { ok: true, am: new Date(jetzt).toISOString(), nachgeholt: true };
       }
       if (n.aufgabeOffen && n.taskId) {
         await pd.completeTask(n.taskId);
         n.aufgabeOffen = false;
+        if (fall) fall.aufgabe = { ok: true, am: new Date(jetzt).toISOString(), nachgeholt: true };
       }
       erledigt++;
     } catch (err) {
@@ -149,6 +157,11 @@ async function nacharbeiten({ jetzt = Date.now(), sofort = false } = {}) {
       n.versuche = (n.versuche || 0) + 1;
       n.letzterFehler = err.message;
       n.naechsterVersuch = new Date(jetzt + naechsterVersuchIn(n.versuche)).toISOString();
+      const fall = n.caseId ? state.cases[n.caseId] : null;
+      if (fall) {
+        if (n.notizHtml) fall.notiz = { ok: false, fehler: err.message, naechsterVersuch: n.naechsterVersuch };
+        if (n.aufgabeOffen) fall.aufgabe = { ok: false, fehler: err.message, naechsterVersuch: n.naechsterVersuch };
+      }
       const alterTage = (jetzt - Date.parse(n.seit)) / 86400000;
       if (alterTage < AUFGEBEN_NACH_TAGEN) bleibt.push(n);
       else console.error(`[worker] Nacharbeit zu Deal ${n.dealId} nach ${Math.round(alterTage)} Tagen`

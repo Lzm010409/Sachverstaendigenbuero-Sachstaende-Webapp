@@ -226,6 +226,18 @@ gelungene Schritt wird sofort abgehakt, damit ein Fehlschlag im zweiten Schritt 
 ersten nicht wiederholt — sonst entstünden bei jedem Anlauf weitere Notizen am Deal.
 Einsehbar unter `GET /api/diagnose/nacharbeiten`, ohne einen einzigen Pipedrive-Aufruf.
 
+Zwei Dinge, die dabei leicht übersehen werden:
+
+- **Der Nachtrag muss an den Fall zurückschreiben.** `nacharbeiten()` trägt `caseId`
+  mit und setzt `cases[id].notiz` bzw. `.aufgabe`. Ohne das stand in der Ergebniskarte
+  für immer „Noch nicht angelegt", auch wenn die Notiz längst am Deal hing — die
+  Warteschlange wusste Bescheid, der Fall nicht.
+- **Jede offene Zeile hat einen eigenen Knopf** (`POST /api/cases/:id/nachholen` mit
+  `schritt: notiz | aufgabe | entwurf`). Ein einzelner Schritt kostet **einen**
+  Pipedrive-Aufruf; „Aktualisieren" zieht alle Fälle neu und kostet rund 110. Wer den
+  Schritt hier ausführt, muss ihn auch aus `offeneNacharbeiten` entfernen — sonst legt
+  der Nachtrag später eine zweite Notiz an.
+
 Beim **Überspringen** wird die Aufgabe nur bei Status `reguliert` abgeschlossen — dort
 heißt der Knopf auch „Aufgabe abschließen". Ein Fall, der wegen laufender Frist oder
 eines Abwarten-Vermerks übersprungen wird, behält seine Aufgabe; sonst verschwände er
@@ -264,6 +276,7 @@ bleibt in beiden Fällen offen — der Healthcheck des Containers braucht ihn.
 | GET | `/api/diagnose/outlook` | Postfach-Anbindung prüfen (Versand- und Entwurfspostfach) |
 | GET | `/api/diagnose/nacharbeiten` | ausstehende Notizen und Aufgabenabschlüsse |
 | POST | `/api/cases/:id/volltext` | Notizen und Mailrümpfe auf Anforderung nachladen |
+| POST | `/api/cases/:id/nachholen` | einen einzelnen Schritt ausführen (`notiz`/`aufgabe`/`entwurf`) |
 | GET | `/api/config` | Betriebsmodus, angemeldeter Nutzer |
 | GET | `/api/cases` | Fälle der Warteschlange |
 | POST | `/api/refresh` | Lauf sofort erzwingen (`force`) |

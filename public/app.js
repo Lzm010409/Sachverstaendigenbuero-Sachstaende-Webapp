@@ -89,7 +89,12 @@
 
   function visible(c) {
     if (filter === "alle") return true;
-    if (filter === "erledigt") return !isPending(c);          // übersprungen + freigegeben
+    // „Erledigt" heißt entschieden — freigegeben oder übersprungen. Vorher stand
+    // hier !isPending(c); damit galt jeder Fall ohne Entwurf als erledigt, auch
+    // „Empfänger unklar" und „Bereits angefragt". Die sind aber nicht erledigt,
+    // sondern nur nicht zu entscheiden — „Empfänger unklar" verlangt sogar eine
+    // Ergänzung in Pipedrive. Sie stehen jetzt unter „Alle".
+    if (filter === "erledigt") return Boolean(c._resolved);
     if (!inArbeitsliste(c)) return false;
     if (filter === "ueberfaellig") return isPending(c) && c.status === "ueberfaellig";
     if (filter === "rueckfrage") return isPending(c) && c.status === "rueckfrage";
@@ -100,7 +105,8 @@
     const pending = CASES.filter(isPending);
     const ueber = pending.filter(c => c.status === "ueberfaellig").length;
     const rueck = pending.filter(c => c.status === "rueckfrage").length;
-    const done = CASES.length - pending.length;
+    // Muss zum Filter „Erledigt" passen: entschieden, nicht bloß „ohne Entwurf".
+    const done = CASES.filter(c => c._resolved).length;
     const compact = document.getElementById("kpisCompact");
     if (compact) {
       compact.textContent = [
@@ -248,11 +254,20 @@
    * stand nirgends.
    */
   function ergebnisHtml(c) {
-    const zeile = (zustand, titel, text, link, linkText) =>
+    /**
+     * Eine Zeile der Ergebniskarte.
+     * @param schritt  Ist er gesetzt, bekommt die Zeile einen eigenen Knopf, der
+     *   genau diesen Schritt nachholt. „Aktualisieren" wäre dafür unpassend: Es
+     *   zieht alle Fälle neu und kostet rund 110 Pipedrive-Aufrufe, ein
+     *   einzelner Schritt kostet einen.
+     */
+    const zeile = (zustand, titel, text, link, linkText, schritt, knopfText) =>
       `<div class="erg ${zustand}"><span class="mark">${zustand === "ok" ? "✓" : zustand === "warn" ? "!" : "–"}</span>` +
-      `<div><div class="et">${esc(titel)}</div><div class="eb">${esc(text)}` +
+      `<div style="min-width:0"><div class="et">${esc(titel)}</div><div class="eb">${esc(text)}` +
       (link ? ` <a href="${esc(link)}" target="_blank" rel="noopener">${esc(linkText)} ↗</a>` : "") +
-      `</div></div></div>`;
+      `</div>` +
+      (schritt ? `<button class="btn subtle nachholen" data-schritt="${esc(schritt)}">${esc(knopfText)}</button>` : "") +
+      `</div></div>`;
 
     const zeilen = [];
     if (c._resolved === "skipped") {
@@ -262,7 +277,8 @@
       zeilen.push(d && d.id
         ? zeile("ok", "Outlook-Entwurf", `Liegt im Postfach${d.postfach ? " " + d.postfach : ""} — noch nicht versendet.`,
           d.webLink, "In Outlook öffnen")
-        : zeile("warn", "Outlook-Entwurf", "Wurde nicht angelegt. Der Text unten lässt sich von Hand übernehmen."));
+        : zeile("warn", "Outlook-Entwurf", "Wurde nicht angelegt. Der Text unten lässt sich von Hand übernehmen.",
+          null, null, "entwurf", "Entwurf jetzt anlegen"));
 
       if (c.recipEmail) zeilen.push(zeile("ok", "Adressat", c.recipEmail + (c.recipOrg ? ` · ${c.recipOrg}` : "")));
     }
@@ -273,12 +289,14 @@
     } else if (c.notiz && c.notiz.ok === false) {
       zeilen.push(zeile("warn", "Notiz in Pipedrive",
         `Noch nicht angelegt (${c.notiz.fehler || "Grund unbekannt"}).`
-        + ` Die App versucht es von allein weiter — erstmals nach einer Viertelstunde, danach in`
-        + ` größeren Abständen. Am Entwurf ändert das nichts. Sofort erneut: Knopf „Aktualisieren".`));
+        + ` Die App versucht es von allein weiter, in wachsenden Abständen.`
+        + ` Am Entwurf ändert das nichts.`,
+        null, null, "notiz", "Notiz jetzt anlegen"));
     } else if (c._resolved === "sent") {
       zeilen.push(zeile("neutral", "Notiz in Pipedrive",
         "Ob sie angelegt wurde, ist nicht festgehalten — diese Freigabe stammt aus einer Fassung,"
-        + " die das noch nicht mitgeschrieben hat. Am Deal nachsehen."));
+        + " die das noch nicht mitgeschrieben hat. Am Deal nachsehen.",
+        null, null, "notiz", "Notiz anlegen"));
     }
 
     // Der Abschluss der Aufgabe ist der Auslöser für die Wiedervorlage in
@@ -288,7 +306,12 @@
     } else if (c.aufgabe && c.aufgabe.ok === false) {
       zeilen.push(zeile("warn", "Aufgabe in Pipedrive",
         `Noch offen (${c.aufgabe.fehler || "Grund unbekannt"}). Wird selbsttätig nachgeholt;`
-        + ` bis dahin läuft die Wiedervorlage in Pipedrive nicht an.`));
+        + ` bis dahin läuft die Wiedervorlage in Pipedrive nicht an.`,
+        null, null, "aufgabe", "Aufgabe jetzt abschließen"));
+    } else if (c._resolved === "sent" && c.taskId) {
+      zeilen.push(zeile("neutral", "Aufgabe in Pipedrive",
+        "Ob sie abgeschlossen wurde, ist nicht festgehalten — diese Freigabe stammt aus einer"
+        + " früheren Fassung.", null, null, "aufgabe", "Aufgabe abschließen"));
     }
 
     const text = c.editedBody || c.draft;
@@ -457,7 +480,39 @@
     });
   }
 
+  /*
+   * Einen einzelnen Schritt nachholen. Kostet einen Pipedrive-Aufruf statt der
+   * rund 110 eines vollen Laufs — deshalb hängt der Knopf an der Zeile und
+   * nicht am „Aktualisieren" oben.
+   */
+  async function schrittNachholen(btn) {
+    const c = CASES.find(x => x.id === activeId);
+    if (!c) return;
+    const schritt = btn.dataset.schritt;
+    const alt = btn.textContent;
+    btn.disabled = true; btn.textContent = "läuft …";
+    try {
+      const r = await api(`/api/cases/${c.id}/nachholen`, {
+        method: "POST", body: JSON.stringify({ schritt })
+      });
+      if (r.notiz) c.notiz = r.notiz;
+      if (r.aufgabe) c.aufgabe = r.aufgabe;
+      if (r.outlook) c.outlookDraft = r.outlook;
+      toast("ok", "Erledigt", {
+        notiz: "Notiz am Deal angelegt.",
+        aufgabe: "Aufgabe in Pipedrive abgeschlossen.",
+        entwurf: "Entwurf im Postfach angelegt."
+      }[schritt] || "Schritt ausgeführt.");
+      selectCase(c.id, { keepView: true });
+    } catch (e) {
+      btn.disabled = false; btn.textContent = alt;
+      toast("err", "Nicht möglich", esc(e.message));
+    }
+  }
+
   detailEl.addEventListener("click", (e) => {
+    const knopf = e.target.closest(".nachholen");
+    if (knopf) { schrittNachholen(knopf); return; }
     const el = e.target.closest(".oeffnen");
     if (el) leseZeileOeffnen(el);
   });

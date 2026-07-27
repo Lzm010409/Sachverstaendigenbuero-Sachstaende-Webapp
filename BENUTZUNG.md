@@ -48,7 +48,7 @@ Die Filter oben:
 | **Zu prüfen** | alles, was auf deine Entscheidung wartet (Standard) |
 | **Überfällig** | davon die, deren Frist am längsten läuft |
 | **Rückfragen** | Fälle, in denen die Gegenseite *uns* etwas gefragt hat |
-| **Erledigt** | freigegeben oder übersprungen — zum Nachsehen |
+| **Erledigt** | freigegeben oder übersprungen — zum Nachsehen. Nur wirklich Entschiedenes; „Empfänger unklar" und „Bereits angefragt" stehen unter **Alle** |
 | **Alle** | alles zusammen |
 
 ### Fall ansehen
@@ -199,7 +199,11 @@ Beim Freigeben passiert dreierlei:
 4. Im Cockpit erscheint ein Link direkt zu diesem Entwurf.
 
 Die Ergebniskarte zeigt für jeden dieser Schritte eine eigene Zeile, damit ohne Blick
-nach Pipedrive erkennbar ist, was angekommen ist und was noch aussteht.
+nach Pipedrive erkennbar ist, was angekommen ist und was noch aussteht. **An jeder
+offenen Zeile hängt ein eigener Knopf**, der genau diesen Schritt sofort ausführt —
+„Notiz jetzt anlegen", „Aufgabe jetzt abschließen", „Entwurf jetzt anlegen". Das kostet
+einen einzigen Pipedrive-Aufruf; der Knopf ⟳ oben würde dafür alle Fälle neu laden
+(rund 110 Aufrufe).
 
 Nimmt Pipedrive die Notiz oder den Abschluss der Aufgabe gerade nicht an — praktisch immer, weil das Tageskontingent
 der Pipedrive-Schnittstelle aufgebraucht ist —, **entsteht der Outlook-Entwurf

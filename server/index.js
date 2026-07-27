@@ -282,7 +282,7 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
 
     if (notizFehler || aufgabeFehler) {
       state.offeneNacharbeiten.push({
-        dealId: c.dealId, taskId: c.taskId || null, token: c.token || null,
+        caseId: c.id, dealId: c.dealId, taskId: c.taskId || null, token: c.token || null,
         notizHtml: notizFehler ? noteHtml : null,
         aufgabeOffen: Boolean(aufgabeFehler),
         // versuche zählt die NACHversuche; der gescheiterte Anlauf von eben
@@ -384,6 +384,71 @@ app.post("/api/cases/:id/volltext", async (req, res, next) => {
 });
 
 /*
+ * Einen einzelnen Schritt der Freigabe nachholen: Notiz, Aufgabe oder Entwurf.
+ *
+ * Der Knopf „Aktualisieren" wäre dafür das falsche Werkzeug — er zieht alle
+ * Fälle neu von Pipedrive und kostet rund 110 Aufrufe. Ein einzelner Schritt
+ * kostet einen. Deshalb hängt in der Ergebniskarte an jeder offenen Zeile ein
+ * eigener Knopf.
+ */
+app.post("/api/cases/:id/nachholen", async (req, res, next) => {
+  try {
+    const c = findCase(req.params.id);
+    if (!c) return res.status(404).json({ error: "Fall nicht gefunden." });
+    const schritt = (req.body && req.body.schritt) || "";
+    if (!["notiz", "aufgabe", "entwurf"].includes(schritt)) {
+      return res.status(400).json({ error: `Unbekannter Schritt „${schritt}".` });
+    }
+    if (DEMO_MODE) return res.json({ ok: true, demo: true });
+
+    const state = store.load();
+    const g = state.cases[c.id];
+    if (!g) return res.status(404).json({ error: "Fall nicht mehr in der Warteschlange." });
+    const body = c.editedBody || c.draft;
+
+    let ergebnis = {};
+    try {
+      if (schritt === "notiz") {
+        if (!body) return res.status(400).json({ error: "Kein Entwurfstext vorhanden." });
+        await pd.addNote(c.dealId, renderApprovalNote(c, body));
+        g.notiz = { ok: true, am: new Date().toISOString(), nachgeholt: true };
+        ergebnis = { notiz: g.notiz };
+      } else if (schritt === "aufgabe") {
+        if (!c.taskId) return res.status(400).json({ error: "Zu diesem Fall gehört keine Aufgabe." });
+        await pd.completeTask(c.taskId);
+        g.aufgabe = { ok: true, am: new Date().toISOString(), nachgeholt: true };
+        ergebnis = { aufgabe: g.aufgabe };
+      } else {
+        if (!graph.isConfigured()) return res.status(400).json({ error: graph.missingHint() });
+        if (!c.recipEmail) return res.status(400).json({ error: "Für diesen Fall ist keine Empfängeradresse bekannt." });
+        const d = await graph.createDraft({
+          to: c.recipEmail,
+          subject: c.subject || `Sachstandsanfrage · ${c.name || ""} · [Az. ${c.token || ""}]`,
+          text: body, bcc: pd.dropboxFuerDeal(c.dealId)
+        });
+        g.outlookDraft = { id: d.id, webLink: d.webLink, postfach: d.postfach || null };
+        ergebnis = { outlook: g.outlookDraft };
+      }
+    } catch (err) {
+      return res.status(502).json({ error: err.message });
+    }
+
+    // Erledigt sich ein Schritt hier, muss er aus der Warteschlange raus —
+    // sonst legt der Nachtrag später eine zweite Notiz an.
+    for (const n of state.offeneNacharbeiten) {
+      if (n.caseId !== c.id) continue;
+      if (schritt === "notiz") n.notizHtml = null;
+      if (schritt === "aufgabe") n.aufgabeOffen = false;
+    }
+    state.offeneNacharbeiten = state.offeneNacharbeiten
+      .filter(n => n.notizHtml || (n.aufgabeOffen && n.taskId));
+
+    store.save(state);
+    res.json({ ok: true, schritt, ...ergebnis });
+  } catch (err) { next(err); }
+});
+
+/*
  * Ausstehende Nacharbeiten einsehen — Notiz am Deal und Abschluss der Aufgabe.
  * Rein lokal, kostet keinen Pipedrive-Aufruf; beantwortet die Frage „wartet
  * hier noch etwas darauf, nach Pipedrive geschrieben zu werden?".
@@ -433,7 +498,7 @@ app.post("/api/cases/:id/skip", async (req, res, next) => {
       } catch (err) {
         aufgabeFehler = err.message;
         state.offeneNacharbeiten.push({
-          dealId: c.dealId, taskId: c.taskId, token: c.token || null,
+          caseId: c.id, dealId: c.dealId, taskId: c.taskId, token: c.token || null,
           notizHtml: null, aufgabeOffen: true,
           seit: new Date().toISOString(), versuche: 0, letzterFehler: err.message
         });

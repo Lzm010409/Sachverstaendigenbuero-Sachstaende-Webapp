@@ -164,6 +164,18 @@ async function addNote(dealId, content) {
   return pd("/notes", { method: "POST", body: { deal_id: Number(dealId), content } });
 }
 
+/**
+ * Aufgabe als erledigt markieren.
+ *
+ * Letzter Schritt nach Entwurf und Notiz: In Pipedrive hängen an diesem
+ * Zustandswechsel Automatisierungen, die die nächste Wiedervorlage anlegen.
+ * Bleibt die Aufgabe offen, entsteht keine Erinnerung — und der Fall steht am
+ * nächsten Tag erneut in der Liste.
+ */
+async function completeTask(taskId) {
+  return pd(`/activities/${Number(taskId)}`, { method: "PUT", body: { done: true } });
+}
+
 // --- Helfer ---------------------------------------------------------------
 
 function parties(arr) {
@@ -222,7 +234,7 @@ function dropboxFuerDeal(dealId) {
 module.exports = {
   takeRequestCount, cacheStats,
   getOpenTasks, getDealTasks, getDeal, getNotes, getPerson, getOrganization,
-  getDealMails, addNote, getOrgPersons, htmlToText, isOurs, OWN_DOMAINS,
+  getDealMails, addNote, completeTask, getOrgPersons, htmlToText, isOurs, OWN_DOMAINS,
   dropboxFuerDeal,
   hasToken: () => Boolean(TOKEN)
 };

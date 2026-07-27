@@ -20,9 +20,10 @@ function ensureDir() {
 }
 
 function emptyState() {
-  // offeneNotizen: Freigabe-Notizen, die Pipedrive gerade nicht angenommen hat
-  // (typisch: Tageskontingent aufgebraucht). Der nächste Lauf trägt sie nach.
-  return { cases: {}, offeneNotizen: [], lastRun: null, lastRunSummary: null, version: 1 };
+  // offeneNacharbeiten: Schritte nach der Freigabe, die Pipedrive gerade nicht
+  // angenommen hat (typisch: Tageskontingent aufgebraucht) — die Notiz am Deal
+  // und das Abschließen der Aufgabe. Beide werden selbsttätig nachgeholt.
+  return { cases: {}, offeneNacharbeiten: [], lastRun: null, lastRunSummary: null, version: 1 };
 }
 
 function load() {
@@ -59,7 +60,21 @@ function normalize(raw) {
       + ` statt Objekt und wurde repariert (${Object.keys(gerettet).length} Fälle übernommen).`);
     state.cases = gerettet;
   }
-  if (!Array.isArray(state.offeneNotizen)) state.offeneNotizen = [];
+  if (!Array.isArray(state.offeneNacharbeiten)) state.offeneNacharbeiten = [];
+  // Übernahme aus der Vorgängerfassung, die nur Notizen kannte. Ohne diesen
+  // Schritt gingen vorgemerkte Notizen beim Deployment verloren.
+  if (Array.isArray(state.offeneNotizen) && state.offeneNotizen.length) {
+    for (const alt of state.offeneNotizen) {
+      state.offeneNacharbeiten.push({
+        dealId: alt.dealId, taskId: alt.taskId || null, token: alt.token || null,
+        notizHtml: alt.content || null, aufgabeOffen: false,
+        seit: alt.seit, versuche: alt.versuche || 0,
+        naechsterVersuch: alt.naechsterVersuch || null, letzterFehler: alt.letzterFehler || null
+      });
+    }
+    console.log(`[store] ${state.offeneNotizen.length} vorgemerkte Notiz(en) in die neue Form übernommen.`);
+  }
+  delete state.offeneNotizen;
   return state;
 }
 

@@ -276,7 +276,19 @@
         + ` Die App versucht es von allein weiter — erstmals nach einer Viertelstunde, danach in`
         + ` größeren Abständen. Am Entwurf ändert das nichts. Sofort erneut: Knopf „Aktualisieren".`));
     } else if (c._resolved === "sent") {
-      zeilen.push(zeile("neutral", "Notiz in Pipedrive", "Nicht festgehalten — die Freigabe stammt aus einer früheren Fassung."));
+      zeilen.push(zeile("neutral", "Notiz in Pipedrive",
+        "Ob sie angelegt wurde, ist nicht festgehalten — diese Freigabe stammt aus einer Fassung,"
+        + " die das noch nicht mitgeschrieben hat. Am Deal nachsehen."));
+    }
+
+    // Der Abschluss der Aufgabe ist der Auslöser für die Wiedervorlage in
+    // Pipedrive — bleibt er aus, entsteht dort keine Erinnerung.
+    if (c.aufgabe && c.aufgabe.ok) {
+      zeilen.push(zeile("ok", "Aufgabe in Pipedrive", "Abgeschlossen — die Wiedervorlage dort ist damit angestoßen."));
+    } else if (c.aufgabe && c.aufgabe.ok === false) {
+      zeilen.push(zeile("warn", "Aufgabe in Pipedrive",
+        `Noch offen (${c.aufgabe.fehler || "Grund unbekannt"}). Wird selbsttätig nachgeholt;`
+        + ` bis dahin läuft die Wiedervorlage in Pipedrive nicht an.`));
     }
 
     const text = c.editedBody || c.draft;
@@ -473,6 +485,7 @@
         // nächsten vollständigen Laden „nicht angelegt" an.
         c.outlookDraft = r.outlook || null;
         c.notiz = r.notiz || null;
+        c.aufgabe = r.aufgabe || null;
         if (r.outlookLink) {
           // Direkt zum Entwurf springen — dort nur noch prüfen und senden.
           toastLink("ok", "Freigegeben", `${c.token}: ${esc(r.message)}`, r.outlookLink, "In Outlook öffnen");
@@ -522,7 +535,10 @@
         c._resolvedMsg = done
           ? `Als reguliert abgeschlossen.`
           : `Übersprungen — Grund: ${c.skipReason || "manuell übersprungen"}.`;
-        toast(done ? "ok" : "warn", done ? "Abgeschlossen" : "Übersprungen", `${c.token}: ${esc(r.reason || c.skipReason || "")}`);
+        c.aufgabe = r.aufgabe || null;
+        toast(done ? "ok" : "warn", done ? "Abgeschlossen" : "Übersprungen",
+          `${c.token}: ${esc(r.reason || c.skipReason || "")}`
+          + (r.hinweis ? `<br><span style="opacity:.85">${esc(r.hinweis)}</span>` : ""));
         afterResolve(c);
       } catch (e) { skipBtn.disabled = false; toast("err", "Fehler", esc(e.message)); }
     });

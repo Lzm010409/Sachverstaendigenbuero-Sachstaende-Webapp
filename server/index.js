@@ -245,6 +245,7 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
     // beim nächsten Lauf nachtragen.
     const state = store.load();
     let notizFehler = null;
+    let aufgabeFehler = null;
     try {
       await pd.addNote(c.dealId, noteHtml);
     } catch (err) {
@@ -254,6 +255,11 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
     // Weder Entwurf noch Notiz: Dann hinterlässt die Freigabe nirgends eine
     // Spur, die einen Neustart überlebt. Lieber gar nicht vermerken — der Fall
     // bleibt stehen und der Text ist weiter zum Kopieren da.
+    //
+    // Dieser Abbruch MUSS vor dem Abschließen der Aufgabe stehen. Andersherum
+    // wäre die Aufgabe in Pipedrive erledigt, während die Anwendung die
+    // Freigabe verwirft: Der Fall käme in keinem Lauf mehr vor, ohne dass
+    // jemals eine Anfrage herausgegangen wäre.
     if (notizFehler && !(outlook && outlook.id)) {
       return res.status(502).json({
         error: `Pipedrive hat die Notiz nicht angenommen (${notizFehler})`
@@ -262,14 +268,29 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
       });
     }
 
-    if (notizFehler) {
-      state.offeneNotizen.push({
-        dealId: c.dealId, token: c.token || null, content: noteHtml,
+    // Letzter Schritt: Aufgabe abschließen. In Pipedrive hängen daran
+    // Automatisierungen, die die nächste Wiedervorlage anlegen — bleibt sie
+    // offen, entsteht keine Erinnerung und der Fall steht morgen wieder da.
+    // Erst nach der Notiz, damit die Spur der Anfrage vor dem Abschluss steht.
+    if (c.taskId) {
+      try {
+        await pd.completeTask(c.taskId);
+      } catch (err) {
+        aufgabeFehler = err.message;
+      }
+    }
+
+    if (notizFehler || aufgabeFehler) {
+      state.offeneNacharbeiten.push({
+        dealId: c.dealId, taskId: c.taskId || null, token: c.token || null,
+        notizHtml: notizFehler ? noteHtml : null,
+        aufgabeOffen: Boolean(aufgabeFehler),
         // versuche zählt die NACHversuche; der gescheiterte Anlauf von eben
         // steht in letzterFehler. Sonst begänne die Wartezeit eine Stufe zu hoch.
-        seit: new Date().toISOString(), versuche: 0, letzterFehler: notizFehler
+        seit: new Date().toISOString(), versuche: 0,
+        letzterFehler: notizFehler || aufgabeFehler
       });
-      console.warn(`[approve] Notiz am Deal ${c.dealId} vorgemerkt:`, notizFehler);
+      console.warn(`[approve] Nacharbeit zu Deal ${c.dealId} vorgemerkt:`, notizFehler || aufgabeFehler);
     }
 
     store.setDecision(state, c.id, "approved",
@@ -286,6 +307,9 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
       gespeichert.notiz = notizFehler
         ? { ok: false, fehler: notizFehler }
         : { ok: true, am: new Date().toISOString() };
+      gespeichert.aufgabe = !c.taskId
+        ? null
+        : aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : { ok: true, am: new Date().toISOString() };
     }
     store.save(state);
 
@@ -299,9 +323,10 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
     } else {
       message = `Freigegeben, aber ohne Empfängeradresse — nur als Notiz am Deal.`;
     }
-    if (notizFehler) {
-      hinweis = `Pipedrive hat die Notiz gerade nicht angenommen (${notizFehler}).`
-        + ` Sie wird beim nächsten Lauf nachgetragen — am Entwurf ändert das nichts.`;
+    if (notizFehler || aufgabeFehler) {
+      const was = [notizFehler && "die Notiz", aufgabeFehler && "das Abschließen der Aufgabe"].filter(Boolean).join(" und ");
+      hinweis = `Pipedrive hat ${was} gerade nicht angenommen (${notizFehler || aufgabeFehler}).`
+        + ` Wird selbsttätig nachgeholt — am Entwurf ändert das nichts.`;
     }
 
     // Beides mitschicken, nicht nur den Link: Das Cockpit zeichnet die
@@ -315,6 +340,7 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
         ? { id: outlook.id, webLink: outlook.webLink, postfach: outlook.postfach || null }
         : null,
       notiz: notizFehler ? { ok: false, fehler: notizFehler } : { ok: true },
+      aufgabe: !c.taskId ? null : (aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : { ok: true }),
       hinweis
     });
   } catch (err) { next(err); }
@@ -358,17 +384,18 @@ app.post("/api/cases/:id/volltext", async (req, res, next) => {
 });
 
 /*
- * Ausstehende Freigabe-Notizen einsehen. Rein lokal, kostet keinen Aufruf —
- * beantwortet die Frage „wartet hier noch etwas darauf, nach Pipedrive
- * geschrieben zu werden?".
+ * Ausstehende Nacharbeiten einsehen — Notiz am Deal und Abschluss der Aufgabe.
+ * Rein lokal, kostet keinen Pipedrive-Aufruf; beantwortet die Frage „wartet
+ * hier noch etwas darauf, nach Pipedrive geschrieben zu werden?".
  */
-app.get("/api/diagnose/notizen", (_req, res, next) => {
+app.get("/api/diagnose/nacharbeiten", (_req, res, next) => {
   try {
     const state = store.load();
     res.json({
-      offen: state.offeneNotizen.length,
-      notizen: state.offeneNotizen.map(n => ({
-        dealId: n.dealId, token: n.token, seit: n.seit,
+      offen: state.offeneNacharbeiten.length,
+      eintraege: state.offeneNacharbeiten.map(n => ({
+        dealId: n.dealId, taskId: n.taskId, token: n.token, seit: n.seit,
+        notizOffen: Boolean(n.notizHtml), aufgabeOffen: Boolean(n.aufgabeOffen),
         versuche: n.versuche || 0, naechsterVersuch: n.naechsterVersuch || null,
         letzterFehler: n.letzterFehler || null
       }))
@@ -377,7 +404,7 @@ app.get("/api/diagnose/notizen", (_req, res, next) => {
 });
 
 /** Überspringen — mit Grund, bleibt nachvollziehbar. */
-app.post("/api/cases/:id/skip", (req, res, next) => {
+app.post("/api/cases/:id/skip", async (req, res, next) => {
   try {
     const c = findCase(req.params.id);
     if (!c) return res.status(404).json({ error: "Fall nicht gefunden." });
@@ -387,9 +414,47 @@ app.post("/api/cases/:id/skip", (req, res, next) => {
       return res.json({ ok: true, status: c._resolved, reason });
     }
     const state = store.load();
+
+    /*
+     * Bei regulierten Fällen heißt der Knopf „Aufgabe abschließen" — und tat
+     * das bisher nicht: Es wurde nur lokal vermerkt, in Pipedrive blieb die
+     * Aufgabe offen. Damit lief auch die dortige Automatisierung für die
+     * nächste Wiedervorlage nicht an.
+     *
+     * Nur bei „reguliert". Ein Fall, der wegen laufender Frist oder eines
+     * Abwarten-Vermerks übersprungen wird, soll seine Aufgabe behalten — sonst
+     * verschwände er dauerhaft aus der Wiedervorlage.
+     */
+    let aufgabeFehler = null, aufgabeErledigt = false;
+    if (c.status === "reguliert" && c.taskId) {
+      try {
+        await pd.completeTask(c.taskId);
+        aufgabeErledigt = true;
+      } catch (err) {
+        aufgabeFehler = err.message;
+        state.offeneNacharbeiten.push({
+          dealId: c.dealId, taskId: c.taskId, token: c.token || null,
+          notizHtml: null, aufgabeOffen: true,
+          seit: new Date().toISOString(), versuche: 0, letzterFehler: err.message
+        });
+        console.warn(`[skip] Aufgabe ${c.taskId} vorgemerkt:`, err.message);
+      }
+    }
+
     store.setDecision(state, c.id, "skipped", reason);
+    const gespeichert = state.cases[c.id];
+    if (gespeichert && (aufgabeErledigt || aufgabeFehler)) {
+      gespeichert.aufgabe = aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : { ok: true, am: new Date().toISOString() };
+    }
     store.save(state);
-    res.json({ ok: true, status: "skipped", reason });
+
+    res.json({
+      ok: true, status: "skipped", reason,
+      aufgabe: aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : (aufgabeErledigt ? { ok: true } : null),
+      hinweis: aufgabeFehler
+        ? `Pipedrive hat das Abschließen der Aufgabe nicht angenommen (${aufgabeFehler}). Wird selbsttätig nachgeholt.`
+        : null
+    });
   } catch (err) { next(err); }
 });
 

@@ -193,11 +193,17 @@ Beim Freigeben passiert dreierlei:
    raus. Der Entwurf wird als HTML ohne feste Schriftart und Farbe angelegt, damit er
    die Outlook-Einstellungen erbt; das Kopieren aus einer Notiz mitsamt schwarzer
    Unterstreichung entfällt.
-3. Im Cockpit erscheint ein Link direkt zu diesem Entwurf.
+3. Die **Aufgabe in Pipedrive wird abgeschlossen**. Daran hängen dort die
+   Automatisierungen, die die nächste Wiedervorlage anlegen — bliebe sie offen,
+   entstünde keine Erinnerung und der Fall stünde am nächsten Tag wieder in der Liste.
+4. Im Cockpit erscheint ein Link direkt zu diesem Entwurf.
 
-Nimmt Pipedrive die Notiz gerade nicht an — praktisch immer, weil das Tageskontingent
+Die Ergebniskarte zeigt für jeden dieser Schritte eine eigene Zeile, damit ohne Blick
+nach Pipedrive erkennbar ist, was angekommen ist und was noch aussteht.
+
+Nimmt Pipedrive die Notiz oder den Abschluss der Aufgabe gerade nicht an — praktisch immer, weil das Tageskontingent
 der Pipedrive-Schnittstelle aufgebraucht ist —, **entsteht der Outlook-Entwurf
-trotzdem**. Die Notiz wird vorgemerkt und selbsttätig nachgetragen: erstmals nach einer
+trotzdem**. Der offene Schritt wird vorgemerkt und selbsttätig nachgeholt: erstmals nach einer
 Viertelstunde, danach in wachsenden Abständen (30 Minuten, 1 Stunde, 2, 4, höchstens 6),
 bis es klappt. Das hängt **nicht** am Tageslauf — ein abends aufgebrauchtes Kontingent
 ist um Mitternacht wieder frei, und der nächste Anlauf kommt dann von allein. Wer nicht

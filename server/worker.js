@@ -116,13 +116,13 @@ function naechsterVersuchIn(versuche) {
   return Math.min(WARTE_START_MS * Math.pow(2, Math.max(0, versuche - 1)), WARTE_MAX_MS);
 }
 
-async function notizenNachtragen({ jetzt = Date.now(), sofort = false } = {}) {
+async function nacharbeiten({ jetzt = Date.now(), sofort = false } = {}) {
   const state = store.load();
-  if (!state.offeneNotizen.length) return { erledigt: 0, offen: 0 };
+  if (!state.offeneNacharbeiten.length) return { erledigt: 0, offen: 0 };
 
   const bleibt = [];
   let erledigt = 0, gesperrt = false;
-  for (const n of state.offeneNotizen) {
+  for (const n of state.offeneNacharbeiten) {
     // Zu früh, oder ein vorheriger Anlauf in diesem Durchgang ist schon
     // gescheitert: dann gar nicht erst versuchen. Ist das Kontingent leer,
     // scheitern auch alle weiteren und verbrennen nur Aufrufe.
@@ -131,7 +131,18 @@ async function notizenNachtragen({ jetzt = Date.now(), sofort = false } = {}) {
       continue;
     }
     try {
-      await pd.addNote(n.dealId, n.content);
+      // Reihenfolge wie bei der Freigabe: erst die Notiz, dann die Aufgabe.
+      // Jeder gelungene Schritt wird sofort abgehakt, damit ein Fehler im
+      // zweiten Schritt den ersten nicht wiederholt — sonst entstünden bei
+      // jedem Anlauf weitere Notizen am Deal.
+      if (n.notizHtml) {
+        await pd.addNote(n.dealId, n.notizHtml);
+        n.notizHtml = null;
+      }
+      if (n.aufgabeOffen && n.taskId) {
+        await pd.completeTask(n.taskId);
+        n.aufgabeOffen = false;
+      }
       erledigt++;
     } catch (err) {
       gesperrt = true;
@@ -140,13 +151,16 @@ async function notizenNachtragen({ jetzt = Date.now(), sofort = false } = {}) {
       n.naechsterVersuch = new Date(jetzt + naechsterVersuchIn(n.versuche)).toISOString();
       const alterTage = (jetzt - Date.parse(n.seit)) / 86400000;
       if (alterTage < AUFGEBEN_NACH_TAGEN) bleibt.push(n);
-      else console.error(`[worker] Notiz für Deal ${n.dealId} nach ${Math.round(alterTage)} Tagen`
+      else console.error(`[worker] Nacharbeit zu Deal ${n.dealId} nach ${Math.round(alterTage)} Tagen`
         + ` und ${n.versuche} Versuchen aufgegeben:`, err.message);
+      continue;
     }
+    // Ist nach dem Durchgang noch etwas offen, bleibt der Eintrag stehen.
+    if (n.notizHtml || (n.aufgabeOffen && n.taskId)) bleibt.push(n);
   }
-  state.offeneNotizen = bleibt;
+  state.offeneNacharbeiten = bleibt;
   store.save(state);
-  if (erledigt) console.log(`[worker] ${erledigt} vorgemerkte Notiz(en) nachgetragen, ${bleibt.length} offen.`);
+  if (erledigt) console.log(`[worker] ${erledigt} Nacharbeit(en) erledigt, ${bleibt.length} offen.`);
   return { erledigt, offen: bleibt.length };
 }
 
@@ -164,7 +178,7 @@ async function runOnce({ today = new Date(), force = false } = {}) {
   try {
     // „Aktualisieren" soll auch ausstehende Notizen sofort erneut versuchen,
     // ohne die Wartezeit abzuwarten — der Knopf ist die Handbedienung.
-    await notizenNachtragen({ sofort: force });
+    await nacharbeiten({ sofort: force });
     const todayISO = today.toISOString().slice(0, 10);
     const tasks = (await pd.getOpenTasks())
       .filter(t => t.type === "task" && SUBJECT_PREFIX.test(String(t.subject || "")))
@@ -527,8 +541,8 @@ function start() {
   const tick = async () => {
     // Zuerst, und unabhängig vom Tageslauf: ausstehende Freigabe-Notizen.
     // Eigener Fehlerfang, damit ein Problem hier den Takt nicht abbricht.
-    try { await notizenNachtragen(); }
-    catch (err) { console.warn("[worker] Notiz-Nachtrag fehlgeschlagen:", err.message); }
+    try { await nacharbeiten(); }
+    catch (err) { console.warn("[worker] Nacharbeiten fehlgeschlagen:", err.message); }
 
     try {
       const state = store.load();
@@ -566,7 +580,7 @@ function start() {
 }
 
 module.exports = {
-  runOnce, start, notizenNachtragen,
+  runOnce, start, nacharbeiten,
   notizenFuerAnsicht, threadFuerAnsicht,
   isRunning: () => running, getLastError: () => lastError
 };

@@ -84,8 +84,9 @@ Pipedrive  ──────────────────────►
 `LAUF_STUNDE` erreicht und heute noch kein Lauf vermerkt (`laufGemachtAm`), läuft er
 einmal. Sonst wird nur geprüft, ob die Tagesübersicht fällig ist.
 
-**Ausstehende Freigabe-Notizen laufen bewusst außerhalb dieses Tageslaufs.**
-`notizenNachtragen()` steht am Anfang jedes Taktes, nicht in `runOnce()`. Am Tageslauf
+**Ausstehende Nacharbeiten laufen bewusst außerhalb dieses Tageslaufs.**
+`nacharbeiten()` steht am Anfang jedes Taktes, nicht in `runOnce()`, und holt beides
+nach: die Notiz am Deal und das Abschließen der Aufgabe. Am Tageslauf
 aufgehängt hätte eine abends abgelehnte Notiz bis zum nächsten Morgen gewartet, obwohl
 das Pipedrive-Kontingent um Mitternacht zurückgesetzt wird. Die Wartezeit zwischen den
 Anläufen verdoppelt sich (15 Minuten bis höchstens 6 Stunden), und beim ersten
@@ -199,11 +200,36 @@ entstehen dadurch nicht**, weil Kaskadenschritt 4 die Freigabe-Notiz in Pipedriv
 
 Im `approve`-Handler von `index.js`, in dieser Reihenfolge:
 
-1. Freigabe als Notiz am Deal protokollieren (`pd.addNote`).
-2. Entwurf ins Outlook-Postfach legen (`graph.createDraft`) — als HTML **ohne** feste
-   Schriftart und Farbe, damit er die Outlook-Einstellungen erbt.
-3. Blindkopie an die **deal-eigene** Pipedrive-Dropbox (`pd.dropboxFuerDeal`).
+1. Entwurf ins Outlook-Postfach legen (`graph.createDraft`) — als HTML **ohne** feste
+   Schriftart und Farbe, damit er die Outlook-Einstellungen erbt, mit der
+   **deal-eigenen** Pipedrive-Dropbox als Blindkopie (`pd.dropboxFuerDeal`).
+2. Freigabe als Notiz am Deal protokollieren (`pd.addNote`).
+3. **Aufgabe abschließen** (`pd.completeTask`). In Pipedrive hängen daran
+   Automatisierungen, die die nächste Wiedervorlage anlegen; bleibt die Aufgabe offen,
+   entsteht keine Erinnerung und der Fall steht am nächsten Tag wieder in der Liste.
 4. Entscheidung in der Warteschlange vermerken, Link zum Entwurf zurückgeben.
+
+Die Reihenfolge ist bindend, und zwar in beide Richtungen:
+
+- **Entwurf vor Notiz.** Andersherum riss ein Fehler der Notiz — praktisch immer ein
+  aufgebrauchtes Tageskontingent — die ganze Freigabe mit, und der Entwurf entstand nie,
+  obwohl Outlook einwandfrei erreichbar war.
+- **Notiz vor Aufgabe.** Die Notiz ist die Spur der Anfrage; sie muss stehen, bevor der
+  Vorgang als erledigt gilt.
+- **Der Abbruch „weder Entwurf noch Notiz" vor dem Abschließen der Aufgabe.** Sonst wäre
+  die Aufgabe in Pipedrive erledigt, während die Anwendung die Freigabe verwirft — der
+  Fall käme in keinem Lauf mehr vor, ohne dass je eine Anfrage herausgegangen wäre.
+
+Schlägt Schritt 2 oder 3 fehl, wird der jeweils offene Schritt in
+`state.offeneNacharbeiten` vorgemerkt und selbsttätig nachgeholt (Abschnitt 3). Jeder
+gelungene Schritt wird sofort abgehakt, damit ein Fehlschlag im zweiten Schritt den
+ersten nicht wiederholt — sonst entstünden bei jedem Anlauf weitere Notizen am Deal.
+Einsehbar unter `GET /api/diagnose/nacharbeiten`, ohne einen einzigen Pipedrive-Aufruf.
+
+Beim **Überspringen** wird die Aufgabe nur bei Status `reguliert` abgeschlossen — dort
+heißt der Knopf auch „Aufgabe abschließen". Ein Fall, der wegen laufender Frist oder
+eines Abwarten-Vermerks übersprungen wird, behält seine Aufgabe; sonst verschwände er
+dauerhaft aus der Wiedervorlage.
 
 **Es wird nichts automatisch versendet.** Abgeschickt wird von Hand aus Outlook. Der
 einzige selbsttätige Versand der Lösung ist die Tagesübersicht an den eigenen Posteingang.
@@ -235,6 +261,9 @@ bleibt in beiden Fällen offen — der Healthcheck des Containers braucht ihn.
 | Methode | Pfad | Zweck |
 |--:|---|---|
 | GET | `/api/health` | Healthcheck; meldet zusätzlich, welche Anbindungen eingerichtet sind (nur Ja/Nein) |
+| GET | `/api/diagnose/outlook` | Postfach-Anbindung prüfen (Versand- und Entwurfspostfach) |
+| GET | `/api/diagnose/nacharbeiten` | ausstehende Notizen und Aufgabenabschlüsse |
+| POST | `/api/cases/:id/volltext` | Notizen und Mailrümpfe auf Anforderung nachladen |
 | GET | `/api/config` | Betriebsmodus, angemeldeter Nutzer |
 | GET | `/api/cases` | Fälle der Warteschlange |
 | POST | `/api/refresh` | Lauf sofort erzwingen (`force`) |

@@ -315,11 +315,20 @@
     }
 
     const text = c.editedBody || c.draft;
+    // Weitergehen ist ein Knopf, kein Automatismus: Wer freigibt, soll erst
+    // sehen, was passiert ist, und dann selbst entscheiden weiterzugehen.
+    const next = naechsterOffener(c.id);
     return `<div class="card"><div class="card-head"><span class="h">Ergebnis</span>` +
       `<span class="badge">${esc(STATUS_LABEL[c._resolved] || "Erledigt")}</span></div>` +
       `<div class="ergListe">${zeilen.join("")}` +
       (text ? `<div class="erg neutral"><span class="mark">✎</span><div style="min-width:0">` +
         `<div class="et">Freigegebener Text</div>${langtext(text, "Anzeigen")}</div></div>` : "") +
+      `</div>` +
+      `<div class="actions">` +
+      (next
+        ? `<button class="btn primary weiter" data-next="${esc(next.id)}">Nächster offener Fall →</button>`
+          + `<span class="note">${esc(next.token || "")} · ${esc(next.name || "")}</span>`
+        : `<span class="note">Kein weiterer Fall in diesem Filter.</span>`) +
       `</div></div>`;
   }
 
@@ -511,6 +520,8 @@
   }
 
   detailEl.addEventListener("click", (e) => {
+    const weiter = e.target.closest(".weiter");
+    if (weiter) { selectCase(weiter.dataset.next); return; }
     const knopf = e.target.closest(".nachholen");
     if (knopf) { schrittNachholen(knopf); return; }
     const el = e.target.closest(".oeffnen");
@@ -532,7 +543,11 @@
       sendBtn.disabled = true;
       const editor = document.getElementById("editor");
       try {
-        const r = await api(`/api/cases/${c.id}/approve`, { method: "POST", body: JSON.stringify({ draft: editor ? editor.value : c.draft }) });
+        const gesendet = editor ? editor.value : (c.editedBody || c.draft);
+        const r = await api(`/api/cases/${c.id}/approve`, { method: "POST", body: JSON.stringify({ draft: gesendet }) });
+        // Genau den Text festhalten, der herausgegangen ist — auch von Hand
+        // getippte Änderungen landen so in der Ergebniskarte.
+        c.editedBody = gesendet;
         c._resolved = "sent";
         c._decidedLocal = Date.now();
         c._resolvedMsg = r.message || `Entwurf an ${c.recipOrg} (${c.recipEmail}) freigegeben.`;
@@ -568,6 +583,11 @@
           const r = await api(`/api/cases/${c.id}/rewrite`, { method: "POST", body: JSON.stringify({ instruction: instr }) });
           const ed = document.getElementById("editor");
           if (ed && r.draft) ed.value = r.draft;
+          // Auch am Fall festhalten. Vorher stand die neue Fassung nur im
+          // Textfeld; die Ergebniskarte las danach weiter c.editedBody ||
+          // c.draft und zeigte unter „Freigegebener Text" die alte Fassung.
+          // Verschickt wurde immer der richtige Text — die Anzeige log.
+          if (r.draft) c.editedBody = r.draft;
           rewrite.classList.remove("open");
           inp.value = "";
           toast("info", "Entwurf überarbeitet", instr ? `Berücksichtigt: „${esc(instr)}“` : "Neue Fassung erstellt.");
@@ -599,13 +619,23 @@
     });
   }
 
+  /** Der nächste Fall, der noch eine Entscheidung braucht. */
+  function naechsterOffener(ausser) {
+    return CASES.find(x => x.id !== ausser && isPending(x) && visible(x)) || null;
+  }
+
+  /*
+   * Nach einer Entscheidung bleibt die Ansicht auf dem Fall stehen.
+   *
+   * Vorher sprang sie sofort zum nächsten offenen Fall. Das war verwirrend:
+   * Man drückt „Freigeben" und sieht unvermittelt eine fremde Akte, ohne zu
+   * erfahren, was mit der eigenen passiert ist. Weitergehen ist jetzt ein
+   * eigener Knopf in der Ergebniskarte.
+   */
   function afterResolve(c) {
     renderKpis();
-    const next = CASES.find(x => x.id !== c.id && isPending(x) && visible(x));
-    if (next) selectCase(next.id);
-    else if (isMobile()) { activeId = null; renderList(); setView("list"); }
-    else { activeId = null; renderList(); detailEl.innerHTML = `<div class="empty">Alle Fälle in diesem Filter bearbeitet. 🎉<br><span style="font-size:12px;">Wechsle den Filter oben oder starte den nächsten Lauf.</span></div>`; }
     renderList();
+    selectCase(c.id, { keepView: true });
   }
 
   /** Hinweis mit Link — für den frisch angelegten Outlook-Entwurf. */

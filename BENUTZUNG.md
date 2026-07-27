@@ -78,8 +78,12 @@ Text, ohne dass du nach Pipedrive wechseln musst.
 | **Ändern lassen** | Ein Feld öffnet sich: schreibe hinein, was anders werden soll („kürzer", „förmlicher", „konkret nach der Rechnung fragen") — der Text wird neu geschrieben. Es gibt auch Schnellwahl-Knöpfe. |
 | **Überspringen** | Der Fall verschwindet aus „Zu prüfen" und landet unter „Erledigt". |
 
-Nach einer Entscheidung springt die Ansicht direkt zum nächsten offenen Fall — du
-kannst die Liste also durcharbeiten, ohne zurückzugehen.
+Nach einer Entscheidung **bleibt die Ansicht auf dem Fall stehen** und zeigt die
+Ergebniskarte: was in Outlook liegt, ob die Notiz am Deal steht, ob die Aufgabe
+abgeschlossen ist. Weitergehen ist ein eigener Knopf **„Nächster offener Fall →"** unten
+in der Karte, der auch gleich nennt, welcher das ist. Vorher sprang die Ansicht von
+selbst weiter — man sah unvermittelt eine fremde Akte, ohne zu erfahren, was mit der
+eigenen passiert ist.
 
 ---
 

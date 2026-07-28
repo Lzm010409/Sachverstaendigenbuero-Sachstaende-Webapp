@@ -49,6 +49,7 @@ Die Filter oben:
 | **Überfällig** | davon die, deren Frist am längsten läuft |
 | **Rückfragen** | Fälle, in denen die Gegenseite *uns* etwas gefragt hat |
 | **Erledigt** | freigegeben oder übersprungen — zum Nachsehen. Nur wirklich Entschiedenes; „Empfänger unklar" und „Bereits angefragt" stehen unter **Alle** |
+| | *Wie lange bleibt was?* Aus **Zu prüfen** verschwindet ein entschiedener Fall nach `NACHLEUCHTEN_STUNDEN` (6 Stunden). Unter **Erledigt** und **Alle** bleibt er `AUFBEWAHREN_TAGE` (14 Tage) stehen und wird dann aus der Warteschlange entfernt. In Pipedrive bleibt alles erhalten — Notiz und abgeschlossene Aufgabe. |
 | **Alle** | alles zusammen |
 
 ### Fall ansehen

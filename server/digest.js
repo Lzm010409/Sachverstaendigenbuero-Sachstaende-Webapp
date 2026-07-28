@@ -17,11 +17,13 @@ const STUNDE = Number(process.env.DIGEST_STUNDE || 8);
 const EMPFAENGER = process.env.DIGEST_EMPFAENGER || process.env.MS_SENDER_UPN || "";
 const APP_URL = (process.env.APP_PUBLIC_URL || "").replace(/\/+$/, "");
 
-function heuteISO(now) {
-  // Ortszeit, nicht UTC — sonst springt der Stichtag mitten am Abend um.
-  const d = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  return d.toISOString().slice(0, 10);
-}
+/*
+ * Datum und Stunde kommen aus server/zeit.js — dort wird die Zeitzone
+ * ausdrücklich benannt. Die frühere Fassung rechnete über
+ * getTimezoneOffset(), was im Container (UTC, ohne Zeitzonendaten) schlicht 0
+ * ist: Der Stichtag war damit UTC und die Stunde ebenfalls.
+ */
+const { heuteISO, stunde } = require("./zeit");
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, c =>
@@ -87,7 +89,7 @@ async function maybeSendDigest(state, faelle, now = new Date()) {
 
   const heute = heuteISO(now);
   if (state.digestGesendetAm === heute) return { gesendet: false, grund: "heute bereits versendet" };
-  if (now.getHours() < STUNDE) return { gesendet: false, grund: `vor ${STUNDE} Uhr` };
+  if (stunde(now) < STUNDE) return { gesendet: false, grund: `vor ${STUNDE} Uhr` };
 
   const offen = faelle.filter(c => !c.decision && c.needsDraft);
   if (!offen.length) {

@@ -17,6 +17,7 @@ const directory = require("./directory");
 const digest = require("./digest");
 const ai = require("./ai");
 const store = require("./store");
+const zeit = require("./zeit");
 
 const SUBJECT_PREFIX = /^sachstand anfragen/i;
 const MAX_CASES = Number(process.env.MAX_CASES_PER_RUN || 40);
@@ -192,7 +193,9 @@ async function runOnce({ today = new Date(), force = false } = {}) {
     // „Aktualisieren" soll auch ausstehende Notizen sofort erneut versuchen,
     // ohne die Wartezeit abzuwarten — der Knopf ist die Handbedienung.
     await nacharbeiten({ sofort: force });
-    const todayISO = today.toISOString().slice(0, 10);
+    // Ortszeit, nicht UTC: Zwischen Mitternacht und 2 Uhr wäre in UTC noch der
+    // Vortag, und der Fälligkeitsvergleich läge einen Tag daneben.
+    const todayISO = zeit.heuteISO(today);
     const tasks = (await pd.getOpenTasks())
       .filter(t => t.type === "task" && SUBJECT_PREFIX.test(String(t.subject || "")))
       .filter(t => t.due_date && t.due_date <= todayISO)
@@ -559,8 +562,8 @@ function start() {
 
     try {
       const state = store.load();
-      const heute = digest.heuteISO(new Date());
-      const stunde = new Date().getHours();
+      const heute = zeit.heuteISO();
+      const stunde = zeit.stunde();
 
       if (state.laufGemachtAm !== heute && stunde >= laufStunde) {
         await runOnce();

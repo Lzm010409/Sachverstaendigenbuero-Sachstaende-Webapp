@@ -55,7 +55,8 @@ Pipedrive  ──────────────────────►
 | `server/graph.js` | Microsoft Graph: Outlook-Entwurf anlegen, Mail versenden |
 | `server/digest.js` | Tägliche Übersicht der offenen Fälle |
 | `server/auth.js` | Anmeldung über Microsoft Entra ID, signiertes Sitzungs-Cookie |
-| `server/store.js` | Warteschlange als JSON, Zusammenführen und Entscheidungen |
+| `server/store.js` | Warteschlange als JSON, Zusammenführen, Entscheidungen, Aufräumen |
+| `server/zeit.js` | Ortszeit über `Intl` — der Container läuft in UTC (Abschnitt 11) |
 | `public/index.html`, `public/app.js` | Oberfläche, mobil und am Schreibtisch |
 
 ---
@@ -203,6 +204,20 @@ Eigenschaften hinein, die `JSON.stringify` **stillschweigend verwirft** — die 
 meldet dann „17 Entwürfe" und zeigt keinen einzigen Fall. Der Schaden ist unauffällig,
 deshalb die zwei Prüfungen.
 
+**Aufräumen.** `aufraeumen()` entfernt entschiedene Fälle nach `AUFBEWAHREN_TAGE`
+(Vorgabe 14). Vorher wuchs die Warteschlange unbegrenzt — `mergeCases()` legt an und
+aktualisiert, entfernte aber nie. Entscheidend: Entfernt wird **ausschließlich nach
+Alter**, niemals deshalb, weil ein Fall im letzten Lauf fehlte. Fehlen kann er auch,
+weil sein Abruf an einem leeren Pipedrive-Kontingent gescheitert ist; ein Aufräumen nach
+Abwesenheit hätte genau dann die Freigabe-Spur gelöscht.
+
+**Wiedervorlegen nur mit neuem Entwurf.** Ein entschiedener Fall wird nur dann erneut
+vorgelegt, wenn sich der Fingerabdruck geändert hat **und** `needsDraft` wieder wahr ist.
+Ohne die zweite Bedingung setzte sich der Fall selbst zurück: Die Freigabe schreibt eine
+Notiz an den Deal, der Fingerabdruck zählt Notizen — jede Freigabe machte den Fall beim
+nächsten Lauf „verändert", die Entscheidung wurde verworfen, und er stand als „Bereits
+angefragt" statt „Freigegeben" da, ohne Link zum Outlook-Entwurf.
+
 Ohne persistentes Volume geht die Warteschlange bei jedem Deployment verloren. Das ist
 ärgerlich (die Entwürfe werden neu erzeugt), aber nicht gefährlich: **doppelte Anfragen
 entstehen dadurch nicht**, weil Kaskadenschritt 4 die Freigabe-Notiz in Pipedrive liest.
@@ -301,6 +316,14 @@ bleibt in beiden Fällen offen — der Healthcheck des Containers braucht ihn.
 
 ## 11. Fallen, die schon einmal Zeit gekostet haben
 
+- **Der Container läuft in UTC.** `node:20-alpine` bringt keine Zeitzonendaten mit; ein
+  gesetztes `TZ` wird ohne `tzdata` stillschweigend ignoriert. `new Date().getHours()`
+  liefert dort UTC-Stunden — `LAUF_STUNDE=7` bedeutete dadurch **9 Uhr** deutscher
+  Sommerzeit. Betroffen war auch das Tagesdatum: zwischen Mitternacht und 2 Uhr Ortszeit
+  ist in UTC noch der Vortag. Zeitpunkte kommen deshalb aus `server/zeit.js`, das die
+  Zeitzone ausdrücklich benennt und Node-eigene ICU-Daten nutzt (unabhängig vom
+  Betriebssystem). Bitte nicht auf `getHours()` oder `toISOString().slice(0,10)`
+  zurückbauen.
 - **Aktenzeichen `MMYY/NNNNTG`.** Die ersten vier Stellen sind **Monat+Jahr**, nicht das
   Jahr: `0626/1973TG` ist Juni 2026.
 - **Der Browser-Cache.** `index.html` wird mit `Cache-Control: no-cache` ausgeliefert und

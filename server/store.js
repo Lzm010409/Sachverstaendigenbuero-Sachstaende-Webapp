@@ -123,19 +123,66 @@ function mergeCases(state, freshCases) {
         ...fresh, queuedAt: prev.queuedAt,
         decision: prev.decision, decidedAt: prev.decidedAt, decisionNote: prev.decisionNote,
         outlookDraft: prev.outlookDraft || null, notiz: prev.notiz || null,
-        editedBody: prev.editedBody || null
+        aufgabe: prev.aufgabe || null, editedBody: prev.editedBody || null
       };
-    } else if (prev.decision && changed) {
-      // Neue Korrespondenz nach einer Entscheidung → erneut vorlegen.
+    } else if (prev.decision && changed && fresh.needsDraft) {
+      // Neue Korrespondenz nach einer Entscheidung UND es gibt wieder etwas zu
+      // entscheiden → erneut vorlegen.
       state.cases[fresh.id] = {
         ...fresh, queuedAt: now, decision: null, decidedAt: null,
         reopenedFrom: prev.decision, reopenedAt: now
+      };
+    } else if (prev.decision && changed) {
+      /*
+       * Verändert, aber ohne neuen Entwurf — also nichts zu entscheiden. Die
+       * Entscheidung bleibt stehen.
+       *
+       * Das war ein Fehler mit Ansage: Die Freigabe schreibt selbst eine Notiz
+       * an den Deal, und der Fingerabdruck zählt Notizen. Jede Freigabe machte
+       * den Fall damit beim nächsten Lauf „verändert", die Entscheidung wurde
+       * verworfen, und der Fall stand plötzlich als „Bereits angefragt" statt
+       * als „Freigegeben" da — mitsamt verlorenem Link zum Outlook-Entwurf.
+       */
+      state.cases[fresh.id] = {
+        ...fresh, queuedAt: prev.queuedAt,
+        decision: prev.decision, decidedAt: prev.decidedAt, decisionNote: prev.decisionNote,
+        outlookDraft: prev.outlookDraft || null, notiz: prev.notiz || null,
+        aufgabe: prev.aufgabe || null, editedBody: prev.editedBody || null
       };
     } else {
       // Noch offen: Entwurf aktualisieren, aber vom Nutzer editierten Text bewahren.
       state.cases[fresh.id] = { ...fresh, queuedAt: prev.queuedAt, decision: null, decidedAt: null, editedBody: prev.editedBody || null };
     }
   }
+  aufraeumen(state);
+  return state;
+}
+
+/*
+ * Alte Entscheidungen aus der Warteschlange nehmen.
+ *
+ * Vorher wuchs sie unbegrenzt: mergeCases legt an und aktualisiert, entfernt
+ * aber nie. Ein freigegebener Fall blieb damit für immer unter „Erledigt" und
+ * „Alle" stehen, auch wenn die Aufgabe in Pipedrive längst abgeschlossen war.
+ *
+ * Entfernt wird ausschließlich nach ALTER einer Entscheidung — NIEMALS deshalb,
+ * weil ein Fall im letzten Lauf fehlte. Fehlen kann er auch, weil sein Abruf an
+ * einem leeren Pipedrive-Kontingent gescheitert ist; ein Aufräumen nach
+ * Abwesenheit hätte genau dann die Freigabe-Spur gelöscht.
+ */
+function aufraeumen(state, jetzt = Date.now()) {
+  const tage = Number(process.env.AUFBEWAHREN_TAGE || 14);
+  if (!(tage > 0)) return state;
+  const grenze = tage * 86400000;
+  let entfernt = 0;
+  for (const [id, c] of Object.entries(state.cases)) {
+    if (!c || !c.decision) continue;
+    const seit = Date.parse(c.decidedAt || c.queuedAt || "");
+    if (!seit || (jetzt - seit) < grenze) continue;
+    delete state.cases[id];
+    entfernt++;
+  }
+  if (entfernt) console.log(`[store] ${entfernt} entschiedene Fälle nach ${tage} Tagen aus der Warteschlange entfernt.`);
   return state;
 }
 
@@ -163,4 +210,4 @@ function pendingCount(state) {
   return listCases(state).filter(c => !c.decision && c.needsDraft).length;
 }
 
-module.exports = { load, save, mergeCases, setDecision, setEditedBody, listCases, pendingCount, emptyState, FILE, DATA_DIR };
+module.exports = { load, save, mergeCases, aufraeumen, setDecision, setEditedBody, listCases, pendingCount, emptyState, FILE, DATA_DIR };

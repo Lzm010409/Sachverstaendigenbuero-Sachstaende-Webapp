@@ -3,6 +3,14 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Zeitzone. Alpine bringt keine Zeitzonendaten mit — ohne tzdata wird ein
+# gesetztes TZ stillschweigend ignoriert und alles läuft in UTC. Das betraf den
+# Tageslauf: LAUF_STUNDE=7 bedeutete damit 9 Uhr deutscher Sommerzeit.
+# Der Zeitplan selbst rechnet inzwischen über server/zeit.js und ist davon
+# unabhängig; das hier sorgt zusätzlich für stimmige Zeiten in den Protokollen.
+RUN apk add --no-cache tzdata
+ENV TZ=Europe/Berlin
+
 # Abhängigkeiten zuerst (Layer-Caching)
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev

@@ -128,7 +128,7 @@ Einstellbar über `ABWARTEN_TAGE` und `GERICHT_TAGE`.
 |---|---|
 | Empfänger (Deal-Feld „Rechtsanwalt", sonst Versicherung) | Formulierung des Textes |
 | Aktenzeichen, Schaden- und Vertragsnummer | Schwerpunkt je Sachlage |
-| Anrede (Duzen-Liste) | Bezug auf die letzte Aussage der Gegenseite |
+| Anrede (Liste vertrauter Kontakte) | Bezug auf die letzte Aussage der Gegenseite |
 | Überspringen ja/nein, Fristen | Einordnung in eine Kategorie |
 
 Der Grund für die Trennung: Ein Sprachmodell formuliert eine **falsche** Schadennummer

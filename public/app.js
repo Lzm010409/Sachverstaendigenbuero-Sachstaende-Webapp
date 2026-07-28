@@ -396,7 +396,7 @@
         `<span class="addr">${esc(c.subject || ("Sachstandsanfrage · " + (c.name || "") + (c.token ? " · [Az. " + c.token + "]" : "")))}</span></div>`;
       draftSection =
         `<div class="card"><div class="card-head"><span class="h">${c.isRueckfrage ? "Antwort-Entwurf" : "Anfrage-Entwurf"}</span>` +
-        `<span class="badge">${c.du ? "Du-Anrede (Anrede-Regeln)" : "Sie-Anrede"}</span></div>` +
+        `<span class="badge">${c.du ? "Neutrale Anrede" : "Förmliche Anrede"}</span></div>` +
         `<div class="draft-wrap">${toLine}${subj}` +
         `<textarea class="editor" id="editor" spellcheck="false">${esc(c.draft)}</textarea>` +
         `<div class="rewrite" id="rewrite"><label>Was soll der Agent ändern?</label>` +

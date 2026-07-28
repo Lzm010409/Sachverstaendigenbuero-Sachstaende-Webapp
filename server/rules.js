@@ -17,7 +17,20 @@ const GENERAL_RULES = [
   "Nimm auf die letzte inhaltliche Aussage der Gegenseite Bezug — das zeigt, dass gelesen wurde,",
   "und erspart Wiederholungen. Frage nur, was tatsächlich noch offen ist.",
   "WICHTIG: Häufig ist die Hauptforderung (Reparatur/Wiederbeschaffung) längst bezahlt und NUR unsere",
-  "Kostenrechnung offen oder gekürzt. Eine pauschale Frage „wurde reguliert?“ wirkt dann unaufmerksam."
+  "Kostenrechnung offen oder gekürzt. Eine pauschale Frage „wurde reguliert?“ wirkt dann unaufmerksam.",
+  "",
+  "SPRACHFORM — sachbezogen, nicht personenbezogen:",
+  "Schreibe über den VORGANG, nicht über den Empfänger. Feststellungen und Fragen zur Sache statt",
+  "Aufforderungen an die Person. Also „Gibt es dazu inzwischen eine Rückmeldung?“ statt „Können Sie uns",
+  "mitteilen, wie der Stand ist?“; „Zur Kostenrechnung liegt bislang keine Stellungnahme vor.“ statt",
+  "„Uns interessiert, ob Sie …“. Verboten sind daher: „Können Sie uns …“, „Uns interessiert …“,",
+  "„möchten wir Sie bitten …“, „Bitte teilen Sie uns mit …“ und vergleichbare direkte Appelle.",
+  "Anrede und Grußformel sind davon ausgenommen — die stehen fest.",
+  "",
+  "KEINE VORAUSEILENDEN KLAUSELN: Nimm kein Problem vorweg, das es noch nicht gibt. Verboten sind",
+  "Sätze wie „Sollten Sie Rückfragen haben, …“, „Für Rückfragen stehen wir gerne zur Verfügung“,",
+  "„erläutern wir diese gerne“, „Sofern noch Unterlagen benötigt werden, …“. Als Abschluss ist genau",
+  "ein neutraler Satz zulässig: „Über eine kurze Rückmeldung würden wir uns freuen.“"
 ].join(" ");
 
 /**

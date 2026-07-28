@@ -131,7 +131,8 @@ und sind damit die belastbare Quelle, auch wenn die lokale Warteschlange verlore
 ## 5. Wie ein Entwurf entsteht
 
 **Erst deterministisch.** `draft.js` baut aus den geprüften Angaben einen vollständigen
-Entwurf: Anrede (`DUZEN_LISTE` entscheidet über Du oder Sie), Aktenzeichen, Schadendatum,
+Entwurf: Anrede (`VERTRAUTE_KONTAKTE` entscheidet zwischen „Guten Tag," und „Sehr geehrte
+Damen und Herren,"), Aktenzeichen, Schadendatum,
 Betreff `Sachstandsanfrage · <Name> · [Az. <Token>]`. Dieser Text ist das Netz — ohne
 API-Schlüssel und bei jedem Fehler des Modells geht er raus.
 
@@ -150,6 +151,18 @@ bleibt aber mit Begründung sichtbar.
 wenn ein fremdes Aktenzeichen auftaucht, eine unbelegte Nummer genannt wird, Anrede oder
 Grußformel verändert wurden oder Mahn- und Drohsprache vorkommt. Verworfene Entwürfe
 landen mit Grund im Log.
+
+Dazu kommt eine **Stilprüfung**: Der Text soll über den Vorgang sprechen, nicht den
+Empfänger ansprechen, und keine vorauseilenden Klauseln enthalten („Sollten Sie
+Rückfragen haben…", „Für Rückfragen stehen wir zur Verfügung"). Die Regeln stehen im
+Systemtext (`rules.js`), aber Regeln im Prompt driften — nach genügend Fällen taucht die
+Formel wieder auf. Die Prüfung ist deshalb das Netz und **bewusst eng gefasst**: nur
+feste Wendungen, keine Heuristik über „Sie" oder Fragezeichen. Eine zu breite Prüfung
+hat hier schon einmal brauchbare Entwürfe kassiert.
+
+Wichtig: `refineDraft()` in `draft.js` („Ändern lassen") hat einen **eigenen**
+Systemtext. Er muss dieselben Stilregeln tragen — sonst holt ein „kürzer" genau die
+Formeln zurück, die beim Erzeugen ausgeschlossen sind.
 
 ---
 

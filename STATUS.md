@@ -123,7 +123,7 @@ in die Freigabe-Warteschlange legen. Nach außen wird **nur bei Freigabe** gesch
 | Empfänger | Deal-Feld **„Rechtsanwalt"** (Organisationsfeld → Org-ID) ist die belastbare Quelle. Adressen des Anspruchstellers sind ausgeschlossen (sonst ging die Anfrage an ihn selbst). |
 | Kanzlei-Adresse fehlt | `/persons?org_id=…` **funktioniert nicht** — Pipedrive ignoriert den Filter und liefert alle Personen. Stattdessen lernendes Verzeichnis (`server/directory.js`), das nur aus dem autoritativen Anwaltsfeld lernt. |
 | Dedup | Freigabe schreibt Notiz „✅ Sachstandsanfrage freigegeben"; diese wird beim nächsten Lauf gelesen. Pipedrive ist damit die Wahrheit — Redeploys legen nichts doppelt vor. |
-| Anrede | `DUZEN_LISTE`, schreibweisentolerant (Schloßmacher = Schlossmacher). Generische Postfachnamen (Service, Info, Kanzlei) gelten **nicht** als Person. |
+| Anrede | `VERTRAUTE_KONTAKTE` (früher `DUZEN_LISTE`, wird weiter gelesen) → „Guten Tag,"; sonst „Sehr geehrte Damen und Herren,". Geduzt wird nicht mehr. Schreibweisentolerant (Schloßmacher = Schlossmacher). Generische Postfachnamen (Service, Info, Kanzlei) gelten **nicht** als Person. |
 
 **Aufgaben-Betreffe** kommen in zwei Varianten vor: „Sachstand anfragen zu: X" und
 „Sachstand anfragen: X". Aktenzeichen-Format ist `MMYY/NNNNTG` (z. B. `0626/1973TG` =

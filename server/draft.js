@@ -14,14 +14,18 @@
 
 const { fmtDE } = require("./analyze");
 
-// Personen, die geduzt werden. Kommagetrennt über Env erweiterbar.
-const DUZEN = (process.env.DUZEN_LISTE || "Claudia Busch,Philipp Nadler,Jens Schlossmacher")
+/*
+ * Vertraute Kontakte: Personen, mit denen laufend zusammengearbeitet wird.
+ *
+ * Sie bekommen „Guten Tag," statt „Sehr geehrte Damen und Herren," — bewusst
+ * NICHT mehr „Hallo <Vorname>,". Auch wo geduzt wird, soll die Anfrage die
+ * neutrale Form wahren; sie geht an einen Vorgang, nicht an eine Person.
+ *
+ * DUZEN_LISTE wird weiter gelesen, damit bestehende Einstellungen nicht brechen.
+ */
+const VERTRAUT = (process.env.VERTRAUTE_KONTAKTE || process.env.DUZEN_LISTE
+  || "Claudia Busch,Philipp Nadler,Jens Schlossmacher")
   .split(",").map(s => s.trim()).filter(Boolean);
-
-function firstName(full) {
-  const parts = String(full || "").trim().split(/\s+/).filter(Boolean);
-  return parts.length ? parts[0] : null;
-}
 
 /** Schreibweisen-tolerant vergleichen: "Schloßmacher" == "Schlossmacher". */
 function normName(s) {
@@ -30,27 +34,33 @@ function normName(s) {
     .replace(/[^a-z ]/g, "").trim();
 }
 
-/** Ermittelt die Anrede: Du-Form für hinterlegte Personen bzw. bei Du-Korrespondenz. */
+/**
+ * Ermittelt die Anrede. Zwei Fassungen, beide in der Sie-Form:
+ *   „Guten Tag,"                    für vertraute Kontakte
+ *   „Sehr geehrte Damen und Herren," sonst
+ * Der Rückgabewert `du` bleibt erhalten, weil er im Cockpit angezeigt wird —
+ * er bedeutet jetzt „vertrauter Kontakt", nicht mehr „wird geduzt".
+ */
 function salutation({ recipient, mails }) {
   // Auch der Organisationsname trägt oft die Person ("Rechtsanwältin Claudia Busch").
   const titles = /\b(rechtsanw[äa]lt(?:in)?|ra|rain|kanzlei|anwaltskanzlei|dr\.?|prof\.?)\b/gi;
   const fromOrg = String((recipient && recipient.org) || "").replace(titles, " ").replace(/\s+/g, " ").trim();
   const person = (recipient && recipient.person) || (/^[A-ZÄÖÜ][a-zäöüß]+ [A-ZÄÖÜ][a-zäöüß]+/.test(fromOrg) ? fromOrg : "");
   const pn = normName(person);
-  const match = pn && DUZEN.find(n => {
+  const match = pn && VERTRAUT.find(n => {
     const nn = normName(n);
     const last = nn.split(" ").slice(-1)[0];
     // Nachname muss vorkommen — ein bloßer Vornamens-Treffer wäre zu unsicher.
     return pn.includes(nn) || (last && last.length > 3 && pn.includes(last));
   });
-  if (match) return { text: `Hallo ${firstName(match)},`, du: true, reason: "Duzen-Liste" };
+  if (match) return { text: "Guten Tag,", du: true, reason: "vertrauter Kontakt (Liste)" };
 
   // Du-Ansprache aus der Korrespondenz erkennen (Gegenseite spricht uns mit Du an).
   const incoming = (mails || []).filter(m => !m.outgoing);
   const duHit = incoming.some(m => /\b(hallo\s+\w+,|\bdu\b|\bdir\b|\bdein(?:e|em|en)?\b)/i.test(
     (m.body || m.snippet || "").slice(0, 400)
   ));
-  if (duHit && person) return { text: `Hallo ${firstName(person)},`, du: true, reason: "Du-Ansprache in der Korrespondenz" };
+  if (duHit && person) return { text: "Guten Tag,", du: true, reason: "vertraute Ansprache in der Korrespondenz" };
 
   return { text: "Sehr geehrte Damen und Herren,", du: false, reason: "Standard" };
 }
@@ -69,12 +79,12 @@ function buildSubject({ token, claimant }) {
 function buildDraft({ analysis, token, claimant, accidentDate, insurer, caseNumber, mails }) {
   const sal = salutation({ recipient: analysis.recipient, mails });
   const duzen = sal.du;
-  // Wir-/Ich-Form konsistent durchhalten (sonst entstehen Sätze wie „möchte wir").
-  const wir = duzen ? "ich" : "wir";
-  const moechte = duzen ? "möchte ich" : "möchten wir";
-  const unser = duzen ? "meiner" : "unserer";
-  const kuemmern = duzen ? "Ich kümmere mich" : "Wir kümmern uns";
-  const reichen = duzen ? "reiche sie nach" : "reichen sie nach";
+  /*
+   * Durchgehend Wir-Form und Sie-Ansprache. Früher schaltete der ganze Text bei
+   * vertrauten Kontakten auf „ich / meiner / dich" um; zur neutralen Anrede
+   * „Guten Tag," passt das nicht, und die doppelte Formenlogik war eine
+   * ständige Fehlerquelle („möchte wir").
+   */
 
   // Bezugszeile
   const bezug = [];
@@ -86,22 +96,29 @@ function buildDraft({ analysis, token, claimant, accidentDate, insurer, caseNumb
 
   const lines = [sal.text, ""];
 
+  /*
+   * Der Text spricht über den Vorgang, nicht die Person an. Also Feststellungen
+   * und Fragen zur Sache statt Aufforderungen („Können Sie uns mitteilen…",
+   * „möchten wir Sie bitten…"). Und keine Klausel, die ein Problem vorwegnimmt,
+   * das es noch nicht gibt — das frühere „Sofern noch Unterlagen benötigt
+   * werden, teilen Sie uns dies bitte mit." ist deshalb entfallen.
+   */
   if (analysis.isRueckfrage && analysis.requestText) {
     // Konkrete Bitte der Gegenseite zuerst aufgreifen — mit Zitat, damit klar ist, worum es geht.
     lines.push(`vielen Dank für die Nachricht vom ${fmtDE(analysis.lastStatement && analysis.lastStatement.date)}${bezugStr}.`);
     lines.push("");
-    lines.push(`Zu ${duzen ? "deiner" : "Ihrer"} Rückfrage („${trimQuote(analysis.requestText, 160)}“): ${kuemmern} darum und ${reichen}.`);
+    lines.push(`Die Rückfrage („${trimQuote(analysis.requestText, 160)}“) nehmen wir auf und reichen die Angaben nach.`);
     lines.push("");
-    lines.push("Bei dieser Gelegenheit: Gibt es zum Regulierungsstand bereits eine Rückmeldung?");
+    lines.push("Gibt es zum Regulierungsstand inzwischen eine Rückmeldung?");
   } else {
-    lines.push(`in der oben genannten Angelegenheit${bezugStr} ${moechte} ${duzen ? "dich" : "Sie"} um eine kurze Rückmeldung zum aktuellen Sachstand bitten.`);
+    lines.push(`zum Sachstand in der oben genannten Angelegenheit${bezugStr}:`);
     lines.push("");
 
     // Bezug auf die letzte inhaltliche Aussage der Gegenseite (nur echte Mails zitieren,
     // keine internen Notizen — die kennt der Empfänger nicht).
     if (analysis.lastStatement && analysis.lastStatement.source === "mail" && analysis.lastStatement.text) {
       lines.push(
-        `${duzen ? "Du teiltest" : "Sie teilten"} am ${fmtDE(analysis.lastStatement.date)} mit: ` +
+        `Zuletzt lag am ${fmtDE(analysis.lastStatement.date)} folgende Rückmeldung vor: ` +
         `„${trimQuote(analysis.lastStatement.text)}“`
       );
       lines.push("");
@@ -110,18 +127,18 @@ function buildDraft({ analysis, token, claimant, accidentDate, insurer, caseNumb
     // Nur behaupten, es fehle eine Antwort, wenn unsere Anfrage tatsächlich die
     // jüngere Nachricht ist.
     if (analysis.ownRequestUnanswered && analysis.lastOwnRequest) {
-      lines.push(`Auf ${duzen ? "meine" : "unsere"} Anfrage vom ${fmtDE(analysis.lastOwnRequest)} liegt bislang keine Rückmeldung vor.`);
+      lines.push(`Zur Anfrage vom ${fmtDE(analysis.lastOwnRequest)} liegt bislang keine Rückmeldung vor.`);
       lines.push("");
     }
 
     lines.push(
-      `Konkret: Wurde die Regulierung des Gutachtens bzw. ${unser} Kostenrechnung inzwischen veranlasst, ` +
-      `oder liegt eine Rückmeldung der Versicherung vor?`
+      "Wurde die Regulierung des Gutachtens bzw. unserer Kostenrechnung inzwischen veranlasst, " +
+      "oder gibt es dazu eine Rückmeldung der Versicherung?"
     );
   }
 
   lines.push("");
-  lines.push(`Sofern noch Unterlagen benötigt werden, ${duzen ? "sag bitte kurz Bescheid" : "teilen Sie uns dies bitte mit"}.`);
+  lines.push("Über eine kurze Rückmeldung würden wir uns freuen.");
   lines.push("");
   lines.push("Viele Grüße");
   lines.push("Kfz-Sachverständigenbüro Gollenstede");
@@ -149,11 +166,20 @@ async function refineDraft({ draft, instruction, context }) {
   if (!key) return { body: shorten(draft.body), model: null, note: "ohne KI gekürzt (ANTHROPIC_API_KEY nicht gesetzt)" };
 
   const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+  // Dieselben Stilregeln wie beim Erzeugen. Ohne sie holt das Umschreiben genau
+  // die Formeln zurück, die dort ausgeschlossen sind — „kürzer" endete dann
+  // regelmäßig bei „Für Rückfragen stehen wir gerne zur Verfügung".
   const sys = [
     "Du formulierst E-Mails für ein deutsches Kfz-Sachverständigenbüro an Rechtsanwälte und Versicherungen.",
     "Regeln: sachlich und knapp; keine rechtliche Bewertung oder Beratung (RDG); keine Drohungen, Fristen oder Mahnungen;",
     "Anrede und Grußformel des Ausgangsentwurfs beibehalten; Aktenzeichen und Zahlen unverändert übernehmen;",
-    "Ausgabe ist ausschließlich der reine Mailtext ohne Betreff und ohne Kommentare."
+    "Ausgabe ist ausschließlich der reine Mailtext ohne Betreff und ohne Kommentare.",
+    "SPRACHFORM: über den Vorgang schreiben, nicht den Empfänger ansprechen. Feststellungen und Fragen zur",
+    "Sache statt Aufforderungen. Verboten: „Können Sie uns …“, „Uns interessiert …“, „möchten wir Sie bitten …“,",
+    "„Bitte teilen Sie uns mit …“.",
+    "KEINE VORAUSEILENDEN KLAUSELN: nichts wie „Sollten Sie Rückfragen haben …“, „Für Rückfragen stehen wir",
+    "gerne zur Verfügung“, „erläutern wir gerne“, „Sofern noch Unterlagen benötigt werden …“. Als Abschluss",
+    "ist genau ein neutraler Satz zulässig: „Über eine kurze Rückmeldung würden wir uns freuen.“"
   ].join(" ");
 
   const user = [
@@ -196,4 +222,4 @@ function shorten(body) {
   return keep.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
-module.exports = { buildDraft, refineDraft, salutation, buildSubject, DUZEN };
+module.exports = { buildDraft, refineDraft, salutation, buildSubject, VERTRAUT };

@@ -196,6 +196,32 @@ function validateDraft(text, facts) {
   const hit = verboten.exec(t);
   if (hit) problems.push(`unzulässige Formulierung: „${hit[0]}“`);
 
+  /*
+   * e) Stil: sachbezogen statt personenbezogen, keine vorauseilenden Klauseln.
+   *
+   * Regeln im Systemtext allein driften — nach genügend Fällen taucht die
+   * Formel wieder auf. Deshalb hier ein Netz.
+   *
+   * Bewusst ENG gefasst: nur feste Wendungen, keine Heuristik über „Sie" oder
+   * Fragezeichen. Eine zu breite Prüfung hat hier schon einmal brauchbare
+   * Entwürfe kassiert („Schadensache Nuhi" wurde als Nummer gelesen).
+   */
+  const stilVerboten = [
+    [/\bk[öo]nnen Sie uns\b/i, "direkte Aufforderung („Können Sie uns …“)"],
+    [/\buns interessiert\b/i, "personenbezogene Einleitung („Uns interessiert …“)"],
+    [/\bm[öo]chten wir Sie (?:bitten|um)\b/i, "Aufforderung („möchten wir Sie bitten …“)"],
+    [/\bbitte teilen Sie uns\b/i, "Aufforderung („Bitte teilen Sie uns mit …“)"],
+    [/\bsollten Sie\b[^.?!]{0,60}\b(?:r[üu]ckfragen|fragen)\b/i, "vorauseilende Rückfragen-Klausel"],
+    [/\b(?:f[üu]r|bei) r[üu]ckfragen\b[^.?!]{0,60}\b(?:zur verf[üu]gung|gerne|jederzeit)\b/i, "vorauseilende Rückfragen-Klausel"],
+    [/\berl[äa]utern wir (?:diese |sie )?gerne\b/i, "vorauseilendes Angebot („erläutern wir gerne“)"],
+    [/\bsofern noch unterlagen ben[öo]tigt\b/i, "vorauseilende Unterlagen-Klausel"],
+    [/\bstehen (?:wir|ich) (?:Ihnen |dir )?(?:gerne |jederzeit )?zur verf[üu]gung\b/i, "Floskel („stehen wir zur Verfügung“)"]
+  ];
+  for (const [re, was] of stilVerboten) {
+    const m = re.exec(t);
+    if (m) problems.push(`${was}: „${m[0]}“`);
+  }
+
   return { ok: problems.length === 0, problems };
 }
 

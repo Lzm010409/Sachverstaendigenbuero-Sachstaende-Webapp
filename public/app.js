@@ -380,6 +380,29 @@
         `<div class="b">${esc(c.ai.problems.join("; "))} — es wird der geprüfte Standardtext gezeigt.</div></div></div>`;
     }
 
+    /*
+     * Eingabe für den Grund beim Überspringen.
+     *
+     * Der Grund landet in der Notiz am Deal — ohne Eingabe stünde dort nur die
+     * maschinelle Einschätzung, und wer den Vorgang später liest, erfährt nicht,
+     * was tatsächlich abgewartet wird. Vorbelegt ist der erkannte Grund; er ist
+     * überschreibbar.
+     */
+    const skipVorschlaege = [
+      "Rückmeldung der Kanzlei abwarten",
+      "Verfahren läuft, Termin abwarten",
+      "Akteneinsicht abwarten",
+      "Unterlagen liegen noch nicht vor"
+    ];
+    const skipBox = (bestaetigen) =>
+      `<div class="rewrite" id="skipBox"><label for="skipInput">Warum wird übersprungen? Der Grund steht später in der Notiz am Deal.</label>` +
+      `<div class="inrow"><input id="skipInput" value="${esc(c.skipReason || "")}" ` +
+      `placeholder="z. B. Rückmeldung der Kanzlei abwarten"/>` +
+      `<button class="btn primary" id="skipGo">${esc(bestaetigen)}</button></div>` +
+      `<div class="hints">` +
+      skipVorschlaege.map(v => `<button data-s="${esc(v)}">${esc(v)}</button>`).join("") +
+      `</div></div>`;
+
     // Entschiedene Fälle behalten ihre volle Ansicht — Akte, Notizen und
     // Mailverlauf bleiben stehen. Nur an der Stelle des Entwurfs steht dann,
     // was aus der Entscheidung geworden ist.
@@ -411,7 +434,8 @@
         `<button class="btn ghost" id="reviseBtn">✎ Ändern lassen</button>` +
         `<div class="spacer"></div>` +
         `<button class="btn subtle" id="skipBtn">Überspringen</button>` +
-        `</div>`;
+        `</div>` +
+        `<div class="card" style="border-top:none;padding:0 16px 14px;">${skipBox("Überspringen")}</div>`;
     } else {
       draftSection =
         `<div class="card"><div class="actions" style="border-top:none;">` +
@@ -420,12 +444,16 @@
         (c.status === "reguliert"
           ? `<button class="btn ghost" id="skipBtn">Aufgabe abschließen</button>`
           : `<button class="btn subtle" id="skipBtn">Übersprungen markieren</button>`) +
-        `</div></div>`;
+        `</div>` +
+        `<div style="padding:0 16px 14px;">${skipBox(c.status === "reguliert" ? "Abschließen" : "Übersprungen markieren")}</div>` +
+        `</div>`;
     }
 
     // Steht rechts etwas Eigenes — Entwurf oder Ergebnis —, bleibt der
     // Mailverlauf links. Sonst wandert er nach rechts, statt die Spalte
-    // leer stehen zu lassen.
+    // leer stehen zu lassen; die schmale Überspringen-Karte rutscht dann
+    // nach links. Sie darf nicht wegfallen: ohne sie ließe sich ein Fall
+    // ohne Entwurf gar nicht abschließen.
     const rechtsBelegt = Boolean(c._resolved || c.draft);
 
     detailEl.innerHTML =
@@ -440,7 +468,7 @@
       `<div class="t">${esc(cTitle)}</div><div class="b">${esc(cBody)}</div></div></div>` +
       aiBlock +
       notizenHtml(c) +
-      (rechtsBelegt ? mailkarte(c) : "") +
+      (rechtsBelegt ? mailkarte(c) : draftSection) +
       `</div>` +                       /* .ctx zu */
       `<div class="draftCol${rechtsBelegt ? "" : " frei"}">` +
       (rechtsBelegt ? draftSection : mailkarte(c)) + `</div>` +
@@ -600,23 +628,46 @@
         b.addEventListener("click", () => { inp.value = b.dataset.h; doRewrite(); }));
     }
 
-    if (skipBtn) skipBtn.addEventListener("click", async () => {
-      skipBtn.disabled = true;
+    /*
+     * Überspringen fragt zuerst nach dem Grund. Der landet in der Notiz am
+     * Deal — ohne Nachfrage stünde dort nur die maschinelle Einschätzung, und
+     * beim späteren Lesen des Vorgangs fehlte die eigentliche Begründung.
+     */
+    const skipBox = document.getElementById("skipBox");
+    const skipInput = document.getElementById("skipInput");
+    const skipGo = document.getElementById("skipGo");
+
+    if (skipBtn && skipBox) skipBtn.addEventListener("click", () => {
+      skipBox.classList.toggle("open");
+      if (!skipBox.classList.contains("open")) return;
+      // Beim Entwurf steht das Feld unterhalb der Schaltflächen und damit oft
+      // außerhalb des Sichtfensters — sonst wirkt der Klick folgenlos.
+      skipBox.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      skipInput.focus(); skipInput.select();
+    });
+    if (skipBox) skipBox.querySelectorAll(".hints button").forEach(b =>
+      b.addEventListener("click", () => { skipInput.value = b.dataset.s; skipInput.focus(); }));
+    if (skipInput) skipInput.addEventListener("keydown", e => { if (e.key === "Enter") skipGo.click(); });
+
+    if (skipGo) skipGo.addEventListener("click", async () => {
+      skipGo.disabled = true;
       try {
-        const r = await api(`/api/cases/${c.id}/skip`, { method: "POST", body: JSON.stringify({ reason: c.skipReason }) });
+        const grund = (skipInput.value || "").trim() || c.skipReason || "manuell übersprungen";
+        const r = await api(`/api/cases/${c.id}/skip`, { method: "POST", body: JSON.stringify({ reason: grund }) });
         const done = c.status === "reguliert";
         c._resolved = r.status || (done ? "sent" : "skipped");
         c._decidedLocal = Date.now();
         c._resolvedMsg = done
-          ? `Als reguliert abgeschlossen.`
-          : `Übersprungen — Grund: ${c.skipReason || "manuell übersprungen"}.`;
+          ? `Als reguliert abgeschlossen — Grund: ${grund}.`
+          : `Übersprungen — Grund: ${grund}.`;
+        c.decisionNote = grund;
         c.notiz = r.notiz || null;
         c.aufgabe = r.aufgabe || null;
         toast(done ? "ok" : "warn", done ? "Abgeschlossen" : "Übersprungen",
-          `${c.token}: ${esc(r.reason || c.skipReason || "")}`
+          `${c.token}: ${esc(r.reason || grund)}`
           + (r.hinweis ? `<br><span style="opacity:.85">${esc(r.hinweis)}</span>` : ""));
         afterResolve(c);
-      } catch (e) { skipBtn.disabled = false; toast("err", "Fehler", esc(e.message)); }
+      } catch (e) { skipGo.disabled = false; toast("err", "Fehler", esc(e.message)); }
     });
   }
 

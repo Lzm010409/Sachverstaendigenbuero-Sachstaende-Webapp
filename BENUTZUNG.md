@@ -77,7 +77,21 @@ Text, ohne dass du nach Pipedrive wechseln musst.
 |---|---|
 | **Freigeben & senden** | Der Entwurf gilt als freigegeben. Es wird eine Notiz „✅ Sachstandsanfrage freigegeben" an den Deal geschrieben, damit 30 Tage lang nicht erneut gefragt wird. **Achtung: aktuell geht dabei noch keine Mail raus** (siehe Abschnitt 6). |
 | **Ändern lassen** | Ein Feld öffnet sich: schreibe hinein, was anders werden soll („kürzer", „förmlicher", „konkret nach der Rechnung fragen") — der Text wird neu geschrieben. Es gibt auch Schnellwahl-Knöpfe. |
-| **Überspringen** | Es wird eine Notiz „⏭️ Sachstandsanfrage übersprungen" mit dem Grund an den Deal geschrieben und die **Aufgabe in Pipedrive abgeschlossen** — dadurch legt die dortige Automatisierung die nächste Wiedervorlage an. Der Fall verschwindet aus „Zu prüfen" und landet unter „Erledigt". |
+| **Überspringen** | Es öffnet sich zuerst ein Feld **„Warum wird übersprungen?"** (siehe unten). Danach wird eine Notiz „⏭️ Sachstandsanfrage übersprungen" mit genau diesem Grund an den Deal geschrieben und die **Aufgabe in Pipedrive abgeschlossen** — dadurch legt die dortige Automatisierung die nächste Wiedervorlage an. Der Fall verschwindet aus „Zu prüfen" und landet unter „Erledigt". |
+
+**Der Grund beim Überspringen.** Ein Klick auf „Überspringen" springt nicht sofort;
+er klappt ein Eingabefeld auf. Vorbelegt ist das, was die Auswertung erkannt hat
+(z. B. „Verfahren läuft"), überschreibbar mit einem eigenen Satz — etwa „Mandant
+klärt den Reparaturweg, Rückmeldung Ende August". Darunter stehen vier
+Schnellwahl-Knöpfe, die das Feld füllen. Bestätigt wird mit dem Knopf rechts oder
+mit der Eingabetaste. Bleibt das Feld leer, wird der erkannte Grund verwendet.
+Der Grund steht anschließend wörtlich in der Notiz am Deal — wer den Vorgang
+später liest, sieht also, worauf tatsächlich gewartet wurde, statt nur einer
+maschinellen Einordnung.
+
+Fälle **ohne Entwurf** (bereits angefragt, Frist läuft, reguliert) haben denselben
+Knopf mit demselben Feld; er heißt dort „Übersprungen markieren" bzw. bei
+regulierten Fällen „Aufgabe abschließen".
 
 Nach einer Entscheidung **bleibt die Ansicht auf dem Fall stehen** und zeigt die
 Ergebniskarte: was in Outlook liegt, ob die Notiz am Deal steht, ob die Aufgabe

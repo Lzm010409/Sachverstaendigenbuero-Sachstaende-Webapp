@@ -280,6 +280,23 @@ Wer den Schritt einzeln nachholt (`/nachholen`, `schritt: "notiz"`), muss die ri
 Vorlage wählen: Bei einem übersprungenen Fall gehört dorthin die Überspringen-Notiz, nicht
 die Freigabe mitsamt Entwurfstext.
 
+**Der Grund kommt aus der Oberfläche, nicht aus der Auswertung.** `skipBtn` löst den
+Skip nicht mehr selbst aus, sondern klappt `#skipBox` auf; erst `#skipGo` (oder die
+Eingabetaste im Feld) schickt `POST /api/cases/:id/skip` mit `{reason}`. Vorbelegt ist
+`c.skipReason` aus der Auswertung, überschreibbar; ein leeres Feld fällt auf
+`c.skipReason` und zuletzt auf `"manuell übersprungen"` zurück. Der Server nimmt den
+Text unverändert entgegen und escapet ihn in `renderSkipNote`.
+
+Zwei Fallen dabei:
+
+- Die Karte mit dem Feld darf **nicht** an `rechtsBelegt` hängen. Diese Prüfung
+  (`c._resolved || c.draft`) entscheidet nur, welche Spalte den Mailverlauf bekommt.
+  Solange sie auch über die Überspringen-Karte entschied, fiel diese bei Fällen ohne
+  Entwurf ersatzlos weg — genau bei denen, die nur noch übersprungen werden können.
+  Jetzt wandert sie in solchen Fällen in die linke Spalte, der Mailverlauf nach rechts.
+- Beim Entwurf steht das Feld unterhalb der Schaltflächen und damit oft außerhalb des
+  Sichtfensters. Ohne `scrollIntoView` wirkt der Klick auf „Überspringen" folgenlos.
+
 **Es wird nichts automatisch versendet.** Abgeschickt wird von Hand aus Outlook. Der
 einzige selbsttätige Versand der Lösung ist die Tagesübersicht an den eigenen Posteingang.
 

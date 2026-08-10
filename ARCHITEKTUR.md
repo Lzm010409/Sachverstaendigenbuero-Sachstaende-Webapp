@@ -266,10 +266,19 @@ Zwei Dinge, die dabei leicht übersehen werden:
   Schritt hier ausführt, muss ihn auch aus `offeneNacharbeiten` entfernen — sonst legt
   der Nachtrag später eine zweite Notiz an.
 
-Beim **Überspringen** wird die Aufgabe nur bei Status `reguliert` abgeschlossen — dort
-heißt der Knopf auch „Aufgabe abschließen". Ein Fall, der wegen laufender Frist oder
-eines Abwarten-Vermerks übersprungen wird, behält seine Aufgabe; sonst verschwände er
-dauerhaft aus der Wiedervorlage.
+**Überspringen läuft denselben Weg** — Notiz mit dem Grund (`renderSkipNote`), dann
+Aufgabe abschließen, bei Fehlschlag dieselbe Nacharbeits-Warteschlange. Das gilt für
+**jeden** Skip-Grund, nicht nur für `reguliert`.
+
+Das war bis zum 28.07.2026 anders: Damals blieb die Aufgabe bei „Frist läuft" oder
+„abwarten" offen, aus Sorge, der Fall verschwände dauerhaft aus der Wiedervorlage. Diese
+Sorge war unbegründet — in Pipedrive hängt am Abschluss der Aufgabe die Automatisierung,
+die die nächste Wiedervorlage **erst anlegt**. Bleibt die Aufgabe offen, entsteht gar
+keine Erinnerung.
+
+Wer den Schritt einzeln nachholt (`/nachholen`, `schritt: "notiz"`), muss die richtige
+Vorlage wählen: Bei einem übersprungenen Fall gehört dorthin die Überspringen-Notiz, nicht
+die Freigabe mitsamt Entwurfstext.
 
 **Es wird nichts automatisch versendet.** Abgeschickt wird von Hand aus Outlook. Der
 einzige selbsttätige Versand der Lösung ist die Tagesübersicht an den eigenen Posteingang.

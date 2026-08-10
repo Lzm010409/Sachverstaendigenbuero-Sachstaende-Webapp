@@ -409,8 +409,13 @@ app.post("/api/cases/:id/nachholen", async (req, res, next) => {
     let ergebnis = {};
     try {
       if (schritt === "notiz") {
-        if (!body) return res.status(400).json({ error: "Kein Entwurfstext vorhanden." });
-        await pd.addNote(c.dealId, renderApprovalNote(c, body));
+        // Übersprungen und freigegeben brauchen verschiedene Notizen — sonst
+        // stünde am übersprungenen Fall eine Freigabe samt Entwurfstext.
+        const uebersprungen = c.decision === "skipped" || c._resolved === "skipped";
+        if (!uebersprungen && !body) return res.status(400).json({ error: "Kein Entwurfstext vorhanden." });
+        await pd.addNote(c.dealId, uebersprungen
+          ? renderSkipNote(c, c.decisionNote || c.skipReason)
+          : renderApprovalNote(c, body));
         g.notiz = { ok: true, am: new Date().toISOString(), nachgeholt: true };
         ergebnis = { notiz: g.notiz };
       } else if (schritt === "aufgabe") {
@@ -481,43 +486,59 @@ app.post("/api/cases/:id/skip", async (req, res, next) => {
     const state = store.load();
 
     /*
-     * Bei regulierten Fällen heißt der Knopf „Aufgabe abschließen" — und tat
-     * das bisher nicht: Es wurde nur lokal vermerkt, in Pipedrive blieb die
-     * Aufgabe offen. Damit lief auch die dortige Automatisierung für die
-     * nächste Wiedervorlage nicht an.
+     * Überspringen wird genauso nach Pipedrive geschrieben wie eine Freigabe:
+     * erst eine Notiz mit dem Grund, dann die Aufgabe abschließen.
      *
-     * Nur bei „reguliert". Ein Fall, der wegen laufender Frist oder eines
-     * Abwarten-Vermerks übersprungen wird, soll seine Aufgabe behalten — sonst
-     * verschwände er dauerhaft aus der Wiedervorlage.
+     * Der Abschluss ist hier kein Nebeneffekt, sondern der Zweck: An diesem
+     * Zustandswechsel hängen in Pipedrive die Automatisierungen, die die
+     * nächste Wiedervorlage anlegen. Bliebe die Aufgabe offen, entstünde keine
+     * Erinnerung und der Fall stünde morgen unverändert wieder da.
+     *
+     * Schlägt einer der Schritte fehl, wandert er in dieselbe
+     * Nacharbeits-Warteschlange wie bei der Freigabe.
      */
-    let aufgabeFehler = null, aufgabeErledigt = false;
-    if (c.status === "reguliert" && c.taskId) {
+    const noteHtml = renderSkipNote(c, reason);
+    let notizFehler = null, aufgabeFehler = null;
+    try {
+      await pd.addNote(c.dealId, noteHtml);
+    } catch (err) { notizFehler = err.message; }
+
+    if (c.taskId) {
       try {
         await pd.completeTask(c.taskId);
-        aufgabeErledigt = true;
-      } catch (err) {
-        aufgabeFehler = err.message;
-        state.offeneNacharbeiten.push({
-          caseId: c.id, dealId: c.dealId, taskId: c.taskId, token: c.token || null,
-          notizHtml: null, aufgabeOffen: true,
-          seit: new Date().toISOString(), versuche: 0, letzterFehler: err.message
-        });
-        console.warn(`[skip] Aufgabe ${c.taskId} vorgemerkt:`, err.message);
-      }
+      } catch (err) { aufgabeFehler = err.message; }
+    }
+
+    if (notizFehler || aufgabeFehler) {
+      state.offeneNacharbeiten.push({
+        caseId: c.id, dealId: c.dealId, taskId: c.taskId || null, token: c.token || null,
+        notizHtml: notizFehler ? noteHtml : null,
+        aufgabeOffen: Boolean(aufgabeFehler),
+        seit: new Date().toISOString(), versuche: 0,
+        letzterFehler: notizFehler || aufgabeFehler
+      });
+      console.warn(`[skip] Nacharbeit zu Deal ${c.dealId} vorgemerkt:`, notizFehler || aufgabeFehler);
     }
 
     store.setDecision(state, c.id, "skipped", reason);
     const gespeichert = state.cases[c.id];
-    if (gespeichert && (aufgabeErledigt || aufgabeFehler)) {
-      gespeichert.aufgabe = aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : { ok: true, am: new Date().toISOString() };
+    if (gespeichert) {
+      gespeichert.notiz = notizFehler
+        ? { ok: false, fehler: notizFehler }
+        : { ok: true, am: new Date().toISOString() };
+      gespeichert.aufgabe = !c.taskId
+        ? null
+        : aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : { ok: true, am: new Date().toISOString() };
     }
     store.save(state);
 
+    const was = [notizFehler && "die Notiz", aufgabeFehler && "das Abschließen der Aufgabe"].filter(Boolean).join(" und ");
     res.json({
       ok: true, status: "skipped", reason,
-      aufgabe: aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : (aufgabeErledigt ? { ok: true } : null),
-      hinweis: aufgabeFehler
-        ? `Pipedrive hat das Abschließen der Aufgabe nicht angenommen (${aufgabeFehler}). Wird selbsttätig nachgeholt.`
+      notiz: notizFehler ? { ok: false, fehler: notizFehler } : { ok: true },
+      aufgabe: !c.taskId ? null : (aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : { ok: true }),
+      hinweis: was
+        ? `Pipedrive hat ${was} gerade nicht angenommen (${notizFehler || aufgabeFehler}). Wird selbsttätig nachgeholt.`
         : null
     });
   } catch (err) { next(err); }
@@ -533,6 +554,23 @@ function renderApprovalNote(c, body) {
     `Freigegeben am ${new Date().toLocaleDateString("de-DE")} über das Sachstands-Cockpit.`
   ].filter(Boolean).join("<br>");
   return `${head}<br><br>${esc(body).replace(/\n/g, "<br>")}`;
+}
+
+/*
+ * Notiz beim Überspringen.
+ *
+ * Damit steht auch im Deal, warum in dieser Runde nicht gefragt wurde — sonst
+ * sieht dort nur jemand eine abgeschlossene Aufgabe ohne Anfrage und muss
+ * raten. Der konkrete Grund aus der Analyse steht mit drin, wenn es einen gibt.
+ */
+function renderSkipNote(c, reason) {
+  const esc = s => String(s || "").replace(/[&<>]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
+  return [
+    `<b>⏭️ Sachstandsanfrage übersprungen</b>`,
+    `Es wurde in dieser Runde nicht angefragt, da weitere Details zum Fall abgewartet werden.`,
+    reason ? `Grund: ${esc(reason)}` : "",
+    `Übersprungen am ${new Date().toLocaleDateString("de-DE")} über das Sachstands-Cockpit.`
+  ].filter(Boolean).join("<br>");
 }
 
 // --- Frontend -------------------------------------------------------------

@@ -77,7 +77,7 @@ Text, ohne dass du nach Pipedrive wechseln musst.
 |---|---|
 | **Freigeben & senden** | Der Entwurf gilt als freigegeben. Es wird eine Notiz „✅ Sachstandsanfrage freigegeben" an den Deal geschrieben, damit 30 Tage lang nicht erneut gefragt wird. **Achtung: aktuell geht dabei noch keine Mail raus** (siehe Abschnitt 6). |
 | **Ändern lassen** | Ein Feld öffnet sich: schreibe hinein, was anders werden soll („kürzer", „förmlicher", „konkret nach der Rechnung fragen") — der Text wird neu geschrieben. Es gibt auch Schnellwahl-Knöpfe. |
-| **Überspringen** | Der Fall verschwindet aus „Zu prüfen" und landet unter „Erledigt". |
+| **Überspringen** | Es wird eine Notiz „⏭️ Sachstandsanfrage übersprungen" mit dem Grund an den Deal geschrieben und die **Aufgabe in Pipedrive abgeschlossen** — dadurch legt die dortige Automatisierung die nächste Wiedervorlage an. Der Fall verschwindet aus „Zu prüfen" und landet unter „Erledigt". |
 
 Nach einer Entscheidung **bleibt die Ansicht auf dem Fall stehen** und zeigt die
 Ergebniskarte: was in Outlook liegt, ob die Notiz am Deal steht, ob die Aufgabe

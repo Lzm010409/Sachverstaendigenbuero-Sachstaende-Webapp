@@ -610,6 +610,7 @@
         c._resolvedMsg = done
           ? `Als reguliert abgeschlossen.`
           : `Übersprungen — Grund: ${c.skipReason || "manuell übersprungen"}.`;
+        c.notiz = r.notiz || null;
         c.aufgabe = r.aufgabe || null;
         toast(done ? "ok" : "warn", done ? "Abgeschlossen" : "Übersprungen",
           `${c.token}: ${esc(r.reason || c.skipReason || "")}`

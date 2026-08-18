@@ -159,6 +159,10 @@
     if (c.vertragNr) cells.push(["Vertrags-Nr.", `<span class="mono">${esc(c.vertragNr)}</span>`]);
     if (c.kennzeichen) cells.push(["Kennzeichen", `<span class="mono">${esc(c.kennzeichen)}</span>`]);
     cells.push(["Fällig am", esc(c.dueDE || c.due)]);
+    // Die Phase steht mit dabei, seit sie darüber entscheidet, ob ein Fall
+    // überhaupt vorgelegt wird — sonst ließe sich nicht nachsehen, warum ein
+    // Fall auftaucht oder fehlt.
+    if (c.stageName) cells.push(["Phase", esc(c.stageName)]);
     if (c.pipedriveUrl) cells.push(["Pipedrive", `<a href="${esc(c.pipedriveUrl)}" target="_blank" rel="noopener" style="color:var(--accent)">Deal öffnen ↗</a>`]);
     return cells.map(([k, v]) => `<div class="cell"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
   }
@@ -741,14 +745,28 @@
     if (cfg.demoMode) { el.textContent = "Demo-Modus"; return; }
     const t = cfg.lastRun ? new Date(cfg.lastRun).toLocaleString("de-DE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }) : "—";
     const s = cfg.lastRunSummary || {};
-    el.textContent = `Letzter Lauf ${t} · ${s.drafts || 0} Entwürfe · ${s.skipped || 0} übersprungen`;
+    const stufen = s.stufen || {};
+    el.textContent = `Letzter Lauf ${t} · ${s.drafts || 0} Entwürfe · ${s.skipped || 0} übersprungen`
+      + (stufen.aussortiert ? ` · ${stufen.aussortiert} nicht in der Phase` : "");
+    // Der volle Wortlaut der Einstellung als Tooltip — wer einen Fall vermisst,
+    // sieht hier ohne Umweg über die Protokolle, was gerade eingestellt ist.
+    if (stufen.einstellung) {
+      el.title = `Phasen: ${stufen.einstellung}`
+        + (stufen.aktiv ? "" : " (Filter nicht aktiv)")
+        + (stufen.unbekannt && stufen.unbekannt.length ? ` — unbekannt: ${stufen.unbekannt.join(", ")}` : "")
+        + (Object.keys(stufen.phasen || {}).length
+          ? `\nAussortiert: ${Object.entries(stufen.phasen).map(([k, v]) => `${k}: ${v}`).join(", ")}` : "");
+    }
 
     // Nicht jeder fällige Fall kommt durch: Bricht ein Abruf ab — meist, weil
     // das Tageskontingent der Pipedrive-Schnittstelle erschöpft ist —, fehlt
     // der Fall in der Liste. Vorher stand das nur in den Serverprotokollen,
     // und die Zusammenfassung sah aus, als wäre alles erledigt.
+    // Aussortierte zählen nicht als fehlend — sie wurden abgerufen und bewusst
+    // aussortiert. Ohne diesen Abzug meldete die Warnung nach Einführung des
+    // Phasenfilters jeden ausgeschlossenen Fall als „nicht abgerufen".
     const faellig = Number(s.dueTasks || 0);
-    const bearbeitet = Number(s.analyzed || 0);
+    const bearbeitet = Number(s.analyzed || 0) + Number(stufen.aussortiert || 0);
     const fehlend = Math.max(0, faellig - bearbeitet);
     const el2 = document.getElementById("runWarn");
     if (!el2) return;

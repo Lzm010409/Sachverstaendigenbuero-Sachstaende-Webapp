@@ -23,6 +23,84 @@ const SUBJECT_PREFIX = /^sachstand anfragen/i;
 const MAX_CASES = Number(process.env.MAX_CASES_PER_RUN || 40);
 const CONCURRENCY = Number(process.env.FETCH_CONCURRENCY || 4);
 
+/*
+ * Welche Phasen der Pipeline überhaupt angefragt werden.
+ *
+ * Die Aufgabe „Sachstand anfragen" entsteht in Pipedrive automatisch und hängt
+ * anschließend am Deal, egal wohin dieser wandert. Ohne Filter landete deshalb
+ * auch ein längst bezahlter Fall in der Freigabe — dort ist nichts mehr
+ * nachzufragen. Umgekehrt gehören Klage und Teilbezahlt sehr wohl dazu.
+ *
+ * Konfiguriert wird über PIPEDRIVE_STUFEN, und zwar über die Namen aus
+ * Pipedrive (Nummern werden auch akzeptiert). Drei Schreibweisen:
+ *   "Versendet, Teilbezahlt, Klage"        — nur diese Phasen (Voreinstellung)
+ *   "nicht: Aufgenommen, In Bearbeitung"   — alle außer diesen
+ *   "alle"                                 — kein Filter
+ */
+const STUFEN_EINSTELLUNG = String(process.env.PIPEDRIVE_STUFEN || "Versendet, Teilbezahlt, Klage");
+
+function stufenRegel(roh = STUFEN_EINSTELLUNG) {
+  const text = String(roh || "").trim();
+  if (!text || /^alle$/i.test(text)) return { art: "alle", namen: [] };
+  const ausser = text.match(/^(?:nicht|ausser|außer)\s*:?\s*(.*)$/i);
+  const namen = (ausser ? ausser[1] : text).split(",").map(x => x.trim()).filter(Boolean);
+  if (!namen.length) return { art: "alle", namen: [] };
+  return { art: ausser ? "ausser" : "nur", namen };
+}
+
+/**
+ * Übersetzt die Namen aus der Einstellung in Phasen-Nummern.
+ *
+ * Bewusst nachsichtig: Ein Tippfehler in einem Namen darf nicht dazu führen,
+ * dass die halbe Warteschlange verschwindet, ohne dass jemand es merkt. Er wird
+ * gemeldet (Protokoll und Lauf-Zusammenfassung); lässt sich KEIN einziger Name
+ * auflösen, wird gar nicht gefiltert, statt alles auszusperren.
+ */
+function stufenFilter(regel, stufen) {
+  if (regel.art === "alle") return { aktiv: false, art: "alle", ids: new Set(), namen: [], unbekannt: [] };
+  const nachName = new Map((stufen || []).map(s => [s.name.trim().toLowerCase(), s.id]));
+  const ids = new Set();
+  const namen = [];
+  const unbekannt = [];
+  for (const n of regel.namen) {
+    if (/^\d+$/.test(n)) { ids.add(Number(n)); namen.push(n); continue; }
+    const id = nachName.get(n.toLowerCase());
+    if (id === undefined) unbekannt.push(n);
+    else { ids.add(id); namen.push(n); }
+  }
+  if (unbekannt.length) {
+    console.warn(`[worker] PIPEDRIVE_STUFEN: unbekannte Phase(n) ${unbekannt.join(", ")} —`
+      + ` vorhanden sind: ${(stufen || []).map(s => s.name).join(", ")}`);
+  }
+  if (!ids.size) {
+    console.error("[worker] PIPEDRIVE_STUFEN ließ sich nicht auflösen — es wird nicht nach Phase gefiltert.");
+    return { aktiv: false, art: "alle", ids, namen, unbekannt };
+  }
+  return { aktiv: true, art: regel.art, ids, namen, unbekannt };
+}
+
+/**
+ * Phase eines Deals — Nummer und Klartext, so weit bekannt.
+ *
+ * Fehlt die Angabe, ist das Ergebnis ausdrücklich `null` und NICHT 0:
+ * `Number(null)` ist 0, und 0 ist eine gültig aussehende Phasennummer. Ein Deal
+ * ohne Phase wäre damit still ausgesperrt worden statt durchgelassen.
+ */
+function stufeVonDeal(deal, stufen) {
+  const roh = deal && typeof deal.stage_id === "object" && deal.stage_id ? deal.stage_id.id : (deal ? deal.stage_id : null);
+  const nr = (roh === null || roh === undefined || roh === "" || !Number.isFinite(Number(roh))) ? null : Number(roh);
+  const treffer = nr !== null ? (stufen || []).find(s => s.id === nr) : null;
+  return { id: nr, name: treffer ? treffer.name : null };
+}
+
+function stufeErlaubt(filter, stufeId) {
+  if (!filter || !filter.aktiv) return true;
+  // Ohne bekannte Phase wird durchgelassen: lieber einmal zu viel vorlegen als
+  // einen Fall wegen einer unvollständigen Antwort stillschweigend verlieren.
+  if (stufeId === null || stufeId === undefined) return true;
+  return filter.art === "ausser" ? !filter.ids.has(stufeId) : filter.ids.has(stufeId);
+}
+
 let running = false;
 let lastError = null;
 
@@ -202,6 +280,19 @@ async function runOnce({ today = new Date(), force = false } = {}) {
       .filter(t => t.deal_id)
       .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
 
+    // Phasenfilter vorbereiten. Scheitert der Abruf (leeres Kontingent), wird
+    // NICHT gefiltert — sonst stünde das Cockpit wegen eines Nebenaufrufs leer.
+    let stufen = [];
+    let stufenAbrufFehler = null;
+    try { stufen = await pd.getStages(); }
+    catch (err) {
+      stufenAbrufFehler = err.message;
+      console.warn("[worker] Phasen nicht abrufbar, es wird nicht nach Phase gefiltert:", err.message);
+    }
+    const filter = stufenAbrufFehler
+      ? { aktiv: false, art: "alle", ids: new Set(), namen: [], unbekannt: [] }
+      : stufenFilter(stufenRegel(), stufen);
+
     const selected = tasks.slice(0, MAX_CASES);
 
     // Bereits bekannte Fälle nach Aktenzeichen, um unveränderte Entwürfe
@@ -224,12 +315,35 @@ async function runOnce({ today = new Date(), force = false } = {}) {
         const frisch = bekannt && bekannt.analyzedAt
           && (Date.now() - Date.parse(bekannt.analyzedAt)) < FALL_TTL_MS;
         if (bekannt && frisch && !bekannt.decision) {
+          /*
+           * Auch der übernommene Fall muss in eine erlaubte Phase gehören.
+           *
+           * Geprüft wird die zuletzt GESPEICHERTE Phase — dieser Zweig holt
+           * bewusst nichts von Pipedrive, das ist sein ganzer Sinn. Er greift
+           * also, wenn sich die Einstellung geändert hat, nicht wenn der Deal
+           * gerade eben umgezogen ist. Ein umgezogener Fall fällt beim nächsten
+           * vollen Durchgang heraus (spätestens nach FALL_TTL_STUNDEN) oder
+           * sofort über „Aktualisieren".
+           *
+           * Fälle aus der Zeit vor dem Phasenfilter haben keine gespeicherte
+           * Phase; sie werden durchgelassen statt reihenweise entfernt.
+           */
+          if (!stufeErlaubt(filter, bekannt.stageId === undefined ? null : bekannt.stageId)) {
+            return { __gefiltert: { id: bekannt.id, token: bekannt.token, stufe: { id: bekannt.stageId, name: bekannt.stageName } } };
+          }
           wiederverwendet++;
           return bekannt;                     // unverändert übernehmen
         }
       }
-      const [deal, notes, mailRes] = await Promise.all([
-        pd.getDeal(task.deal_id),
+      // Der Deal kommt zuerst, allein wegen der Phase: Fällt der Fall hier
+      // heraus, sparen Notizen und Mailverlauf zwei weitere Aufrufe des
+      // Tageskontingents — je Lauf und Fall.
+      const deal = await pd.getDeal(task.deal_id);
+      const stufe = stufeVonDeal(deal, stufen);
+      if (!stufeErlaubt(filter, stufe.id)) {
+        return { __gefiltert: { id: `task-${task.id}`, token: tokenVorab || null, stufe } };
+      }
+      const [notes, mailRes] = await Promise.all([
         pd.getNotes(task.deal_id),
         pd.getDealMails(task.deal_id)
       ]);
@@ -368,6 +482,8 @@ async function runOnce({ today = new Date(), force = false } = {}) {
         notizen: notizenFuerAnsicht(notes),
         ai: aiInfo,
         lawyerOrgId: facts.lawyerOrgId || null,
+        stageId: stufe.id,
+        stageName: stufe.name,
         pipedriveUrl: buildDealUrl(task.deal_id),
         fingerprint,
         analyzedAt: new Date().toISOString(),
@@ -376,8 +492,9 @@ async function runOnce({ today = new Date(), force = false } = {}) {
       };
     });
 
-    let fresh = results.filter(r => r && !r.__error);
+    let fresh = results.filter(r => r && !r.__error && !r.__gefiltert);
     const errors = results.filter(r => r && r.__error).map(r => r.__error);
+    const gefiltert = results.filter(r => r && r.__gefiltert).map(r => r.__gefiltert);
 
     // --- Zweiter Durchgang: Adressverzeichnis anwenden -----------------------
     // Erst lernen, welche Adresse zu welcher Kanzlei gehört, dann Fälle ohne
@@ -452,6 +569,27 @@ async function runOnce({ today = new Date(), force = false } = {}) {
         + ` (Cache gelesen: ${spend.inCacheRead} Token)`);
     }
 
+    /*
+     * Fälle, die inzwischen in eine ausgeschlossene Phase gewandert sind, aus
+     * der Warteschlange nehmen — aber nur unentschiedene.
+     *
+     * Das ist kein Aufräumen nach Abwesenheit (das wäre gefährlich, siehe
+     * store.aufraeumen), sondern nach positiver Feststellung: Wir haben den
+     * Deal in diesem Lauf gesehen und seine Phase gelesen. Entschiedene Fälle
+     * bleiben stehen, damit die Ergebniskarte ihre Frist ausleben kann.
+     */
+    let ausgephast = 0;
+    for (const g of gefiltert) {
+      const vorhanden = g && g.id ? state.cases[g.id] : null;
+      if (!vorhanden || vorhanden.decision) continue;
+      delete state.cases[g.id];
+      ausgephast++;
+    }
+    if (ausgephast) {
+      console.log(`[worker] ${ausgephast} Fall/Fälle aus der Warteschlange genommen`
+        + ` — Phase nicht mehr in PIPEDRIVE_STUFEN.`);
+    }
+
     store.mergeCases(state, fresh);
     const pending = store.pendingCount(state);
     state.lastRun = startedAt;
@@ -464,12 +602,30 @@ async function runOnce({ today = new Date(), force = false } = {}) {
       aiSpend: spend,
       apiAufrufe: pd.takeRequestCount(),
       wiederverwendet,
+      // Phasenfilter sichtbar machen: Wer einen Fall vermisst, soll hier sehen,
+      // ob die Einstellung ihn aussortiert hat — und welche Einstellung gilt.
+      stufen: {
+        einstellung: STUFEN_EINSTELLUNG,
+        aktiv: filter.aktiv,
+        art: filter.art,
+        erkannt: filter.namen,
+        unbekannt: filter.unbekannt,
+        abrufFehler: stufenAbrufFehler,
+        aussortiert: gefiltert.length,
+        phasen: gefiltert.reduce((acc, g) => {
+          const n = (g.stufe && (g.stufe.name || g.stufe.id)) || "unbekannt";
+          acc[n] = (acc[n] || 0) + 1;
+          return acc;
+        }, {})
+      },
       errors: errors.slice(0, 5),
       pending
     };
     console.log(`[worker] Lauf fertig: ${state.lastRunSummary.analyzed} Fälle`
       + ` (${wiederverwendet} unverändert übernommen), ${state.lastRunSummary.apiAufrufe} Pipedrive-Aufrufe,`
-      + ` ${pending} zur Freigabe.`);
+      + ` ${pending} zur Freigabe.`
+      + (gefiltert.length ? ` ${gefiltert.length} wegen der Phase aussortiert`
+        + ` (${Object.entries(state.lastRunSummary.stufen.phasen).map(([k, v]) => `${k}: ${v}`).join(", ")}).` : ""));
     // Tägliche Übersicht — prüft selbst, ob heute schon eine raus ist.
     try {
       const d = await digest.maybeSendDigest(state, store.listCases(state));
@@ -596,6 +752,7 @@ function start() {
 }
 
 module.exports = {
+  stufenRegel, stufenFilter, stufeVonDeal, stufeErlaubt,
   runOnce, start, nacharbeiten,
   notizenFuerAnsicht, threadFuerAnsicht,
   isRunning: () => running, getLastError: () => lastError

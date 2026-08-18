@@ -18,14 +18,49 @@ Sie übernimmt die Vorarbeit für Sachstandsanfragen an Kanzleien und Versicheru
    Tagesgeschäft — häufigeres Nachsehen brächte nichts und belastet nur das
    Tageskontingent der Pipedrive-API. Der Knopf **⟳** löst jederzeit einen
    sofortigen Lauf aus.
-2. Für jeden Fall liest sie **Deal, Notizen und den Mailverlauf** und beurteilt die
+2. Berücksichtigt werden nur Deals in den Phasen **Versendet, Teilbezahlt und Klage**.
+   Ein Fall in „Aufgenommen" oder „In Bearbeitung" ist noch bei uns, ein bezahlter
+   braucht keine Nachfrage mehr (siehe „Welche Fälle kommen in die Liste?").
+3. Für jeden Fall liest sie **Deal, Notizen und den Mailverlauf** und beurteilt die
    Sachlage.
-3. Passt eine Nachfrage, schreibt sie einen **fertigen Entwurf** und legt ihn in die
+4. Passt eine Nachfrage, schreibt sie einen **fertigen Entwurf** und legt ihn in die
    Warteschlange. Passt sie nicht, wird der Fall **mit Begründung übersprungen**.
-4. Du siehst dir die Entwürfe an, gibst frei, lässt ändern oder überspringst.
+5. Du siehst dir die Entwürfe an, gibst frei, lässt ändern oder überspringst.
 
 **Ohne deine Freigabe passiert nichts nach außen.** Der Hintergrundlauf schreibt
 weder in Pipedrive noch verschickt er Mails.
+
+### Welche Fälle kommen in die Liste?
+
+Zwei Bedingungen müssen zusammenkommen:
+
+1. Am Deal hängt eine **offene Aufgabe „Sachstand anfragen"**, deren Fälligkeit heute
+   oder früher liegt.
+2. Der Deal steht in einer Phase, die angefragt werden soll: **Versendet, Teilbezahlt,
+   Klage**.
+
+Die zweite Bedingung ist nötig, weil die Aufgabe am Deal hängen bleibt, egal wohin
+dieser wandert. Ohne sie stünde auch ein längst bezahlter Fall in der Freigabe.
+
+Zieht ein Fall in eine ausgeschlossene Phase um, verschwindet er beim nächsten
+vollständigen Lauf aus der Liste — sofern er noch nicht entschieden ist. Bereits
+freigegebene oder übersprungene Fälle bleiben stehen, damit die Ergebniskarte
+nachvollziehbar bleibt.
+
+**Nachsehen, ob es an der Phase liegt:** Die Kopfzeile links meldet „N nicht in der
+Phase", wenn ein Lauf Fälle deswegen aussortiert hat; der Mauszeiger darauf zeigt die
+Einstellung und welche Phasen betroffen waren. In der Fallansicht steht die Phase
+unter den Stammdaten. Und `/api/diagnose/stufen` listet alle Phasen aus Pipedrive mit
+der Angabe, ob sie angefragt werden.
+
+**Ändern:** über die Umgebungsvariable `PIPEDRIVE_STUFEN` in Coolify. Drei
+Schreibweisen, Namen genau wie in Pipedrive:
+
+| Wert | Wirkung |
+|---|---|
+| `Versendet, Teilbezahlt, Klage` | nur diese Phasen (aktuell eingestellt) |
+| `nicht: Aufgenommen, In Bearbeitung` | alle außer diesen — also inklusive „Bezahlt" |
+| `alle` | kein Filter |
 
 ---
 
@@ -318,6 +353,7 @@ in einem signierten Cookie (`HttpOnly`, `SameSite=Lax`, hinter HTTPS zusätzlich
 | „Das Konto … ist nicht freigegeben" | Adresse in `ENTRA_ERLAUBTE_NUTZER` ergänzen. |
 | „Anmeldung aus einem fremden Mandanten" | `MS_TENANT_ID` gehört zu einem anderen Verzeichnis. |
 | Liste bleibt leer | Gibt es fällige Aufgaben mit Betreff „Sachstand anfragen" und `due_date <= heute`? Der Knopf **⟳** löst einen Lauf sofort aus. |
+| Ein bestimmter Fall fehlt | Steht sein Deal in einer angefragten Phase? Die Kopfzeile meldet „N nicht in der Phase", `/api/diagnose/stufen` zeigt die Einstellung. |
 | Alle Fälle „Empfänger unklar" | Im Deal fehlt das Feld „Rechtsanwalt" bzw. eine Versicherung. |
 | Entwürfe klingen unpassend | Kategorie am Fall prüfen und den Schwerpunkt in `server/rules.js` anpassen. |
 | Häufig „KI-Entwurf verworfen" | Der Prüfschritt greift zu oft — die Prompt-Regeln müssen nachgeschärft werden. |

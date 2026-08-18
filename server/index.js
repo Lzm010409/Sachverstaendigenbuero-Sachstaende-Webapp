@@ -112,6 +112,32 @@ app.get("/api/diagnose/outlook", async (_req, res, next) => {
   try { res.json(await graph.diagnose()); } catch (err) { next(err); }
 });
 
+/*
+ * Welche Phasen der Pipeline angefragt werden — und welche nicht.
+ *
+ * Beantwortet die Frage „warum steht dieser Fall nicht in der Liste?" ohne
+ * Umweg über die Serverprotokolle: Sie zeigt alle Phasen aus Pipedrive und
+ * daneben, ob die aktuelle Einstellung sie durchlässt.
+ */
+app.get("/api/diagnose/stufen", async (_req, res, next) => {
+  try {
+    const regel = worker.stufenRegel();
+    let stufen = [];
+    let fehler = null;
+    try { stufen = await pd.getStages(); } catch (err) { fehler = err.message; }
+    const filter = worker.stufenFilter(regel, stufen);
+    res.json({
+      einstellung: process.env.PIPEDRIVE_STUFEN || "(Voreinstellung) Versendet, Teilbezahlt, Klage",
+      art: filter.art, aktiv: filter.aktiv,
+      unbekannt: filter.unbekannt, abrufFehler: fehler,
+      phasen: stufen.map(st => ({
+        id: st.id, name: st.name, pipelineId: st.pipelineId,
+        wirdAngefragt: worker.stufeErlaubt(filter, st.id)
+      }))
+    });
+  } catch (err) { next(err); }
+});
+
 app.get("/api/config", (req, res) => {
   const state = DEMO_MODE ? null : store.load();
   const sitzung = auth.readSession(req);

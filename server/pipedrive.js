@@ -73,6 +73,25 @@ async function getOpenTasks({ limit = 500 } = {}) {
   return out;
 }
 
+/*
+ * Die Phasen der Pipeline (Aufgenommen, In Bearbeitung, Versendet, …).
+ *
+ * Nach Namen konfiguriert, nicht nach Nummer: Die Nummern stehen nirgends
+ * sichtbar in Pipedrive, und wer die Einstellung später liest, soll erkennen,
+ * was gemeint ist. Der Abruf ist gepuffert — Phasen ändern sich fast nie, und
+ * ohne Puffer kostete jeder Lauf einen weiteren Aufruf des Tageskontingents.
+ */
+const STUFEN_TTL_MS = Number(process.env.STUFEN_CACHE_STUNDEN || 12) * 3600 * 1000;
+let stufenCache = null;   // { stufen, at }
+
+async function getStages({ frisch = false } = {}) {
+  if (!frisch && stufenCache && Date.now() - stufenCache.at < STUFEN_TTL_MS) return stufenCache.stufen;
+  const data = await pd("/stages", { query: { limit: 100 } });
+  const stufen = (data || []).map(s => ({ id: s.id, name: String(s.name || ""), pipelineId: s.pipeline_id }));
+  stufenCache = { stufen, at: Date.now() };
+  return stufen;
+}
+
 /** Erledigte Aufgaben eines Deals — für "unsere letzte Anfrage vom …". */
 async function getDealTasks(dealId) {
   const data = await pd("/activities", { query: { deal_id: dealId, limit: 100 } });
@@ -233,7 +252,7 @@ function dropboxFuerDeal(dealId) {
 
 module.exports = {
   takeRequestCount, cacheStats,
-  getOpenTasks, getDealTasks, getDeal, getNotes, getPerson, getOrganization,
+  getOpenTasks, getDealTasks, getDeal, getStages, getNotes, getPerson, getOrganization,
   getDealMails, addNote, completeTask, getOrgPersons, htmlToText, isOurs, OWN_DOMAINS,
   dropboxFuerDeal,
   hasToken: () => Boolean(TOKEN)

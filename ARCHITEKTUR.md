@@ -72,14 +72,70 @@ Pipedrive  ──────────────────────►
    analysiert und wartet noch auf eine Entscheidung, wird er unverändert übernommen —
    *ohne einen einzigen Pipedrive-Aufruf*. Der Knopf „Aktualisieren" setzt `force` und
    umgeht das.
-3. **Fall laden.** Deal, Notizen und Mailverlauf parallel; dazu die Deal-Felder über
-   `fields.js` und die im Deal hinterlegte Kanzlei.
+3. **Fall laden.** Zuerst der Deal allein — wegen der Phase (siehe unten); erst danach
+   Notizen und Mailverlauf parallel, dazu die Deal-Felder über `fields.js` und die im
+   Deal hinterlegte Kanzlei.
 4. **Bewerten.** `analyzeCase()` liefert Status, Empfänger und — die wichtigste Angabe —
    `needsDraft`.
 5. **Entwerfen**, falls nötig. Erst der deterministische Baukasten, dann gegebenenfalls
    das Modell (Abschnitt 5).
 6. **Einsortieren.** `store.mergeCases()` führt die Fälle mit der Warteschlange
    zusammen; bereits getroffene Entscheidungen bleiben erhalten.
+
+### Der Phasenfilter
+
+Die Aufgabe „Sachstand anfragen" entsteht in Pipedrive automatisch und bleibt danach am
+Deal hängen, egal wohin dieser wandert. Ohne Filter landete deshalb auch ein längst
+bezahlter Fall in der Freigabe — dort ist nichts mehr nachzufragen. Umgekehrt gehören
+Klage und Teilbezahlt sehr wohl dazu.
+
+`PIPEDRIVE_STUFEN` bestimmt, welche Phasen durchkommen. Konfiguriert wird über die
+**Namen** aus Pipedrive, nicht über Nummern: Die Nummern stehen dort nirgends sichtbar,
+und wer die Einstellung später liest, soll erkennen, was gemeint ist. Nummern werden
+trotzdem akzeptiert. Drei Schreibweisen:
+
+| Wert | Wirkung |
+|---|---|
+| `Versendet, Teilbezahlt, Klage` | nur diese Phasen (Voreinstellung) |
+| `nicht: Aufgenommen, In Bearbeitung` | alle außer diesen |
+| `alle` | kein Filter |
+
+Die Namen werden über `pd.getStages()` in Nummern übersetzt (gepuffert, `STUFEN_CACHE_STUNDEN`,
+Voreinstellung 12 h — sonst kostete jeder Lauf einen weiteren Aufruf).
+
+Drei Entscheidungen, die man beim Lesen sonst für Nachlässigkeit hält:
+
+- **Der Deal wird VOR Notizen und Mails geholt.** Fällt der Fall über die Phase heraus,
+  spart das zwei weitere Aufrufe des Tageskontingents — je Lauf und Fall.
+- **Im Zweifel wird durchgelassen, nie ausgesperrt.** Ein Tippfehler in einem Namen wird
+  gemeldet (Protokoll, Lauf-Zusammenfassung, `/api/diagnose/stufen`), die übrigen Namen
+  greifen weiter. Lässt sich *kein* Name auflösen oder scheitert `getStages()` (leeres
+  Kontingent), wird gar nicht gefiltert. Ein Deal ohne erkennbare Phase kommt ebenfalls
+  durch. Der umgekehrte Weg — Filter greift zu weit — hieße: Fälle verschwinden
+  wortlos aus der Freigabe.
+- **`Number(null)` ist `0`, und `0` sieht aus wie eine gültige Phasennummer.** `stufeVonDeal()`
+  gibt bei fehlender Angabe ausdrücklich `null` zurück. Ohne diese Unterscheidung wäre
+  ein Deal ohne Phase still ausgesperrt worden.
+
+Ein Fall, der inzwischen in eine ausgeschlossene Phase gewandert ist, wird aus der
+Warteschlange **entfernt** — aber nur, wenn er noch unentschieden ist. Das ist kein
+Aufräumen nach Abwesenheit (siehe `store.aufraeumen`, Abschnitt 4), sondern nach
+positiver Feststellung: Der Deal wurde in diesem Lauf geladen und seine Phase gelesen.
+Entschiedene Fälle bleiben stehen, damit ihre Ergebniskarte die Frist ausleben kann.
+
+Der Übernahme-Zweig aus Schritt 2 prüft die zuletzt **gespeicherte** Phase — er holt
+bewusst nichts von Pipedrive, das ist sein Sinn. Er greift also bei einer geänderten
+Einstellung, nicht bei einem gerade umgezogenen Deal; der fällt beim nächsten vollen
+Durchgang heraus (spätestens nach `FALL_TTL_STUNDEN`) oder sofort über „Aktualisieren".
+Fälle aus der Zeit vor dem Phasenfilter haben keine gespeicherte Phase und werden
+durchgelassen statt reihenweise entfernt.
+
+Sichtbar ist das Ganze an drei Stellen: die Phase steht in der Fallansicht unter
+„Phase", die Kopfzeile nennt „N nicht in der Phase" (mit der Einstellung als Tooltip),
+und `GET /api/diagnose/stufen` listet alle Phasen aus Pipedrive mit `wirdAngefragt`.
+Die Warnung „X von Y fälligen Fällen nicht abgerufen" zieht die aussortierten ab —
+sonst hätte sie nach Einführung des Filters jeden ausgeschlossenen Fall als Ausfall
+gemeldet.
 
 `start()` prüft alle `TAKT_MINUTEN` nur die Uhrzeit — das kostet nichts. Ist die Stunde
 `LAUF_STUNDE` erreicht und heute noch kein Lauf vermerkt (`laufGemachtAm`), läuft er
@@ -337,6 +393,7 @@ bleibt in beiden Fällen offen — der Healthcheck des Containers braucht ihn.
 | POST | `/api/cases/:id/rewrite` | Entwurf umschreiben `{instruction}` |
 | POST | `/api/cases/:id/approve` | freigeben `{draft}` — **kein Auto-Versand** |
 | POST | `/api/cases/:id/skip` | überspringen `{reason}` |
+| GET | `/api/diagnose/stufen` | alle Pipeline-Phasen mit `wirdAngefragt` |
 
 ---
 

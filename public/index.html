@@ -123,15 +123,27 @@
 
   .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); white-space: nowrap; }
   .chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-  .chip.faellig { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
-  .chip.ueberfaellig { color: var(--critical); background: var(--critical-soft); border-color: transparent; }
-  .chip.rueckfrage { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
-  .chip.reguliert { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
-  .chip.unklar { color: var(--text-muted); background: var(--surface-3); border-color: transparent; }
-  .chip.abwarten { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
-  .chip.bereits_angefragt { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+  /* Die Farbe folgt der HANDLUNG, nicht der Sachlage. „Klären" ist rot, weil es
+     das Einzige ist, was ohne eine Eingabe in Pipedrive stehenbleibt; vorher war
+     es grau und ging in der Liste unter. */
+  .chip.pruefen { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+  .chip.klaeren { color: var(--critical); background: var(--critical-soft); border-color: transparent; }
+  .chip.abschliessen { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+  .chip.ruht { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
   .chip.skipped { color: var(--text-muted); background: var(--surface-3); border-color: transparent; }
   .chip.sent { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+
+  /* Die Sachlage steht bewusst unauffällig daneben: Sie erklärt die Handlung,
+     sie konkurriert nicht mit ihr. */
+  .lage { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  /* Der Hinweis bei „Klären" ist kein Fehler, sondern eine Arbeitsanweisung —
+     deshalb ruhig eingefasst und nicht als Alarm. */
+  /* Der Weg nach Pipedrive ist ein Link, sieht aber aus wie eine Schaltfläche —
+     ohne diese Zeile bekäme er zusätzlich die Unterstreichung eines Links. */
+  a.btn { text-decoration: none; }
+  .klaerhinweis { font-size: 13px; line-height: 1.5; color: var(--text); background: var(--critical-soft);
+    border: 1px solid transparent; border-radius: var(--radius-sm); padding: 11px 13px; }
+  .dhead .lage { font-size: 12px; }
 
   .detail { overflow-y: auto; min-height: 0; padding: 22px 26px 40px; }
   /* Detailansicht als Raster: der Kopf spannt über die ganze Breite, darunter
@@ -456,9 +468,9 @@
         <span id="runWarn" hidden style="font-size:11.5px;font-weight:600;color:var(--warn);
           background:var(--warn-soft);border-radius:8px;padding:6px 9px;line-height:1.4;"></span>
         <div class="filters" id="filters">
-          <button data-f="offen" class="active">Zu prüfen</button>
-          <button data-f="ueberfaellig">Überfällig</button>
-          <button data-f="rueckfrage">Rückfragen</button>
+          <button data-f="zutun" class="active">Zu tun</button>
+          <button data-f="klaeren">Klären</button>
+          <button data-f="ruht">Ruht</button>
           <button data-f="erledigt">Erledigt</button>
           <button data-f="alle">Alle</button>
         </div>

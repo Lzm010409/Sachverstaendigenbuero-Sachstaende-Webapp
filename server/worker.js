@@ -10,9 +10,9 @@
  */
 
 const pd = require("./pipedrive");
-const { analyzeCase, extractToken, fmtDE } = require("./analyze");
+const { analyzeCase, extractToken, fmtDE, looksLikeLawyer } = require("./analyze");
 const { buildDraft } = require("./draft");
-const { getDealFacts } = require("./fields");
+const { getDealFacts, loadFields } = require("./fields");
 const directory = require("./directory");
 const digest = require("./digest");
 const ai = require("./ai");
@@ -256,6 +256,123 @@ async function nacharbeiten({ jetzt = Date.now(), sofort = false } = {}) {
   return { erledigt, offen: bleibt.length };
 }
 
+// Wie weit die Suche nach einer unbekannten Kanzleiadresse gehen darf. Beides
+// bewusst klein: Es geht um wenige Kanzleien, und was einmal gefunden ist,
+// steht danach dauerhaft im Verzeichnis.
+const NACHSCHLAG_KANZLEIEN = Number(process.env.NACHSCHLAG_KANZLEIEN || 5);
+const NACHSCHLAG_DEALS = Number(process.env.NACHSCHLAG_DEALS || 4);
+
+/**
+ * Die Adresse der Gegenseite aus dem Schriftwechsel eines Falls.
+ *
+ * Eingehende Post wiegt schwerer als ausgehende: Wer uns geschrieben hat,
+ * benutzt diese Adresse nachweislich. Ausgehende Post zählt trotzdem mit —
+ * an wen wir geschrieben haben, ist eine brauchbare zweite Quelle.
+ */
+function adresseAusMails(mails, deal, orgName) {
+  const eigene = new Set(
+    ((deal && deal.person_id && deal.person_id.email) || [])
+      .map(e => String(e.value || e).toLowerCase()).filter(Boolean)
+  );
+  const kandidaten = [];
+  const nimm = (p, mail, eingehend) => {
+    const adr = String((p && p.email) || "").toLowerCase();
+    if (!adr || !adr.includes("@")) return;
+    if (eigene.has(adr) || pd.isOurs([{ email: adr }])) return;
+    kandidaten.push({ email: adr, person: p.name || null, time: mail.time, eingehend });
+  };
+  for (const m of mails || []) {
+    if (!m.outgoing) nimm((m.from || [])[0], m, true);
+    else for (const p of [...(m.to || []), ...(m.cc || [])]) nimm(p, m, false);
+  }
+
+  /*
+   * Sicherung gegen die schlimmere Verwechslung: An denselben Fällen hängt
+   * auch die Versicherung. Eine Versicherungsadresse unter dem Namen der
+   * Kanzlei zu lernen hieße, die Anfrage an den falschen Empfänger zu
+   * schicken — schlimmer als gar keine Adresse. Deshalb wird nur übernommen,
+   * was entweder nach Kanzlei aussieht oder den Kanzleinamen in der Domain
+   * trägt.
+   */
+  const namensteile = String(orgName || "").toLowerCase()
+    .replace(/rechtsanw[aä]lt(in|e)?|kanzlei|dr\.|prof\.|,/g, " ")
+    .split(/[^a-zä-ü]+/).filter(w => w.length >= 5);
+  const passt = (adr) => {
+    const domain = adr.split("@")[1] || "";
+    if (namensteile.some(w => domain.includes(w))) return true;
+    return looksLikeLawyer(adr, "");
+  };
+
+  const brauchbar = kandidaten.filter(k => passt(k.email));
+  brauchbar.sort((a, b) => (Number(b.eingehend) - Number(a.eingehend))
+    || String(b.time || "").localeCompare(String(a.time || "")));
+  return brauchbar[0] || null;
+}
+
+/**
+ * Für Kanzleien ohne bekannte Adresse in deren übrigen Fällen nachsehen.
+ * Verändert `dir` und meldet, was gefunden wurde.
+ */
+async function kanzleienNachschlagen(faelle, dir) {
+  const offen = new Map();
+  for (const c of faelle) {
+    if (c.recipEmail || !c.lawyerOrgId) continue;
+    if (directory.lookup(dir, { orgId: c.lawyerOrgId, orgName: c.recipOrg })) continue;
+    const schluessel = String(c.lawyerOrgId);
+    if (!offen.has(schluessel)) offen.set(schluessel, { orgId: c.lawyerOrgId, orgName: c.recipOrg, eigene: new Set() });
+    offen.get(schluessel).eigene.add(c.dealId);
+  }
+  if (!offen.size) return { kanzleien: 0, geoeffnet: 0, gelernt: 0 };
+
+  let alleDeals = [];
+  let feldSchluessel = null;
+  try {
+    alleDeals = await pd.getAllDeals();
+    const felder = await loadFields();
+    const def = felder.byName.get("rechtsanwalt");
+    feldSchluessel = def && def.key;
+  } catch (err) {
+    console.warn("[verzeichnis] Nachschlagen nicht möglich:", err.message);
+    return { kanzleien: offen.size, geoeffnet: 0, gelernt: 0, fehler: err.message };
+  }
+  if (!feldSchluessel) return { kanzleien: offen.size, geoeffnet: 0, gelernt: 0, fehler: "Feld „Rechtsanwalt“ nicht gefunden" };
+
+  const nachKanzlei = new Map();
+  for (const d of alleDeals) {
+    const roh = d[feldSchluessel];
+    const id = roh && typeof roh === "object" ? (roh.value || roh.id) : roh;
+    if (!id) continue;
+    const k = String(id);
+    if (!nachKanzlei.has(k)) nachKanzlei.set(k, []);
+    nachKanzlei.get(k).push(d);
+  }
+
+  let geoeffnet = 0, gelernt = 0;
+  for (const eintrag of [...offen.values()].slice(0, NACHSCHLAG_KANZLEIEN)) {
+    const kandidaten = (nachKanzlei.get(String(eintrag.orgId)) || [])
+      .filter(d => !eintrag.eigene.has(d.id))
+      .sort((a, b) => String(b.update_time || "").localeCompare(String(a.update_time || "")))
+      .slice(0, NACHSCHLAG_DEALS);
+    for (const d of kandidaten) {
+      geoeffnet++;
+      const res = await pd.getDealMails(d.id, { limit: 12, withBody: 0 });
+      const treffer = adresseAusMails(res.mails || [], d, eintrag.orgName);
+      if (!treffer) continue;
+      directory.learn(dir, {
+        orgId: eintrag.orgId, orgName: eintrag.orgName,
+        email: treffer.email, person: treffer.person, seenAt: treffer.time
+      });
+      gelernt++;
+      console.log(`[verzeichnis] „${eintrag.orgName}“: ${treffer.email} aus Fall ${d.title || d.id} gelernt.`);
+      break;                       // eine belegte Adresse genügt
+    }
+  }
+  if (offen.size > NACHSCHLAG_KANZLEIEN) {
+    console.log(`[verzeichnis] ${offen.size - NACHSCHLAG_KANZLEIEN} weitere Kanzlei(en) erst im nächsten Lauf.`);
+  }
+  return { kanzleien: offen.size, geoeffnet, gelernt };
+}
+
 /** Ein Durchlauf: fällige Tasks → Analyse → Entwürfe → Warteschlange. */
 /**
  * Ein Lauf.
@@ -457,6 +574,9 @@ async function runOnce({ today = new Date(), force = false } = {}) {
         dueDE: fmtDE(task.due_date),
         wait: analysis.overdueDays,
         status: analysis.status,
+        // Die beiden neuen Achsen: was ist zu tun, und worum geht es fachlich.
+        aufgabe: analysis.aufgabe,
+        lage: analysis.lage,
         needsDraft: analysis.needsDraft,
         isRueckfrage: analysis.isRueckfrage,
         skipReason: analysis.skipReason,
@@ -510,6 +630,27 @@ async function runOnce({ today = new Date(), force = false } = {}) {
         });
       }
     }
+    /*
+     * Nachschlagen bei unbekannten Kanzleien.
+     *
+     * Der Grund, warum Fälle als „Empfänger fehlt" liegenbleiben, steckt in
+     * Pipedrive selbst: Kanzlei-Organisationen haben dort weder ein Mailfeld
+     * noch verknüpfte Personen (nachgemessen: `people_count = 0` bei allen).
+     * Die Adresse existiert ausschließlich in der Korrespondenz — und zwar oft
+     * an einem GANZ ANDEREN Fall derselben Kanzlei.
+     *
+     * Bis hierher lernte das Verzeichnis nur aus den Fällen, die derselbe Lauf
+     * ohnehin geladen hat: fällige Aufgaben in erlaubten Phasen. Eine Kanzlei,
+     * deren einziger bekannter Schriftwechsel an einem bezahlten Fall hängt,
+     * war damit unauffindbar — der Phasenfilter hatte diese Quelle zusätzlich
+     * verengt.
+     *
+     * Deshalb hier gezielt: Für jede Kanzlei ohne bekannte Adresse werden
+     * höchstens `NACHSCHLAG_DEALS` ihrer übrigen Fälle geöffnet, neueste
+     * zuerst. Das kostet einmalig ein paar Aufrufe; danach steht die Adresse
+     * dauerhaft im Verzeichnis.
+     */
+    const nachschlag = await kanzleienNachschlagen(fresh, dir);
     await directory.save(dir);
 
     fresh = fresh.map(c => {
@@ -522,6 +663,11 @@ async function runOnce({ today = new Date(), force = false } = {}) {
         recipPerson: c.recipPerson || hit.person || null,
         recipSource: (c.recipSource || "") + " · Adresse aus Verzeichnis",
         status: c.status === "unklar" ? (c.wait > 0 ? "ueberfaellig" : "faellig") : c.status,
+        // Mit der Adresse ist der Fall nicht mehr zu klären, sondern zu prüfen.
+        // Ohne diese Zeile bliebe er als „Klären" stehen, obwohl der Entwurf
+        // gleich darunter erzeugt wird.
+        aufgabe: c.aufgabe === "klaeren" ? "pruefen" : c.aufgabe,
+        lage: c.lage === "kein_empfaenger" ? "erstanfrage" : c.lage,
         skipReason: c.skipReason === "Empfänger unklar" ? null : c.skipReason,
         needsDraft: c.skipReason === "Empfänger unklar" ? true : c.needsDraft
       };
@@ -602,6 +748,8 @@ async function runOnce({ today = new Date(), force = false } = {}) {
       aiSpend: spend,
       apiAufrufe: pd.takeRequestCount(),
       wiederverwendet,
+      // Was das Nachschlagen unbekannter Kanzleien gebracht hat.
+      verzeichnis: nachschlag,
       // Phasenfilter sichtbar machen: Wer einen Fall vermisst, soll hier sehen,
       // ob die Einstellung ihn aussortiert hat — und welche Einstellung gilt.
       stufen: {
@@ -753,6 +901,7 @@ function start() {
 
 module.exports = {
   stufenRegel, stufenFilter, stufeVonDeal, stufeErlaubt,
+  kanzleienNachschlagen, adresseAusMails,
   runOnce, start, nacharbeiten,
   notizenFuerAnsicht, threadFuerAnsicht,
   isRunning: () => running, getLastError: () => lastError

@@ -82,7 +82,8 @@ server/
   graph.js        Outlook-Entwurf + Mailversand
   digest.js       tägliche Übersicht
   auth.js         Entra-Anmeldung, signiertes Cookie
-  store.js        Warteschlange (JSON unter DATA_DIR)
+  store.js        Warteschlange (Postgres über DATABASE_URL)
+  db/schema.js    Datenbankschema (Drizzle), Migrationen unter drizzle/
   demo-cases.js   Beispieldaten für DEMO_MODE
 public/
   index.html      Cockpit-UI (hell/dunkel, mobil + Schreibtisch)
@@ -133,11 +134,12 @@ Stand des letzten Live-Tests: 25–27 fällige Fälle, ~19–21 Entwürfe,
 6 begründet übersprungen (reguliert/abwarten), 1 ohne Empfänger.
 
 **Offene Punkte:**
-- **Persistentes Volume** für `DATA_DIR=/data` ist in Coolify **noch nicht angelegt**
-  (die Storages-API akzeptiert nur `type: "file"` — daher per UI: Application →
-  Persistent Storage → + Add → **Volume Mount**, Mount Path `/data`, Host-Pfad leer).
-  Ohne Volume geht nur die lokale Warteschlange bei einem Redeploy verloren;
-  Freigaben bleiben dank Notiz-Dedup erhalten.
+- **Standalone-Postgres in Coolify anlegen und `DATABASE_URL` setzen.** Damit erübrigt
+  sich das nie angelegte Volume für `DATA_DIR=/data`: Coolify sichert Datenbanken, aber
+  keine Volumes. Vollständige Anleitung samt Import und Rückweg in
+  `DATENBANK-UMSTELLUNG.md`. Bis dahin läuft die Anwendung weiter auf den JSON-Dateien
+  und verliert die Warteschlange bei jedem Redeploy; Freigaben bleiben dank Notiz-Dedup
+  erhalten.
 - **`PIPEDRIVE_BCC_DROPBOX`** setzen, damit Pipedrive gesendete Mails am Vorgang
   ablegt. Die Adressen folgen dem Muster `<konto>+deal<ID>@pipedrivemail.com`;
   `pd.dropboxFuerDeal()` setzt die Deal-Nummer je Fall ein, in der Variable genügt
@@ -184,7 +186,7 @@ erledigt werden müssen:
    Exchange *Application Access Policy* auf genau dieses eine Postfach begrenzen —
    sonst erlaubt die Berechtigung technisch den Versand aus jedem Postfach.
 
-2. **Volume** anlegen (siehe oben) und **`PIPEDRIVE_BCC_DROPBOX`** setzen.
+2. **Datenbank** anlegen und `DATABASE_URL` setzen (siehe oben) sowie **`PIPEDRIVE_BCC_DROPBOX`** setzen.
 
 3. **Pipedrive-Kontingent.** Das Tagesbudget ist knapp und war schon aufgebraucht.
    Der Lauf verbraucht rund 110 Abrufe; der Rest geht für den übrigen Betrieb drauf.

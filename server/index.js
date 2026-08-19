@@ -74,9 +74,9 @@ function demoCaseList() {
   return demoState;
 }
 
-function currentCases() {
+async function currentCases() {
   if (DEMO_MODE) return demoCaseList();
-  const state = store.load();
+  const state = await store.load();
   return store.listCases(state)
     .sort((a, b) => {
       // Offene zuerst, dann nach Wartezeit absteigend.
@@ -85,8 +85,8 @@ function currentCases() {
     });
 }
 
-function findCase(id) {
-  return currentCases().find(c => c.id === id) || null;
+async function findCase(id) {
+  return (await currentCases()).find(c => c.id === id) || null;
 }
 
 // --- API ------------------------------------------------------------------
@@ -99,8 +99,13 @@ app.get("/api/health", (_req, res) => {
     eingerichtet: {
       outlook: graph.isConfigured(),
       pipedriveDropbox: Boolean(pd.dropboxFuerDeal(1)),
-      anthropic: Boolean(process.env.ANTHROPIC_API_KEY)
-    }
+      anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
+      // Die wichtigste Auskunft seit der Datenbankumstellung: Steht hier
+      // `false`, läuft der Dienst noch auf dem alten Dateispeicher und
+      // verliert seinen Bestand beim nächsten Deploy.
+      datenbank: store.nutztDatenbank()
+    },
+    speicher: store.nutztDatenbank() ? "postgres" : "datei"
   });
 });
 
@@ -138,8 +143,9 @@ app.get("/api/diagnose/stufen", async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.get("/api/config", (req, res) => {
-  const state = DEMO_MODE ? null : store.load();
+app.get("/api/config", async (req, res, next) => {
+  try {
+  const state = DEMO_MODE ? null : await store.load();
   const sitzung = auth.readSession(req);
   res.json({
     demoMode: DEMO_MODE,
@@ -153,11 +159,12 @@ app.get("/api/config", (req, res) => {
     workerRunning: worker.isRunning(),
     pending: state ? store.pendingCount(state) : (demoCaseList().filter(c => !c._resolved && c.draft).length)
   });
+  } catch (err) { next(err); }
 });
 
-app.get("/api/cases", (_req, res, next) => {
+app.get("/api/cases", async (_req, res, next) => {
   try {
-    const cases = currentCases().map(c => ({
+    const cases = (await currentCases()).map(c => ({
       ...c,
       // Vom Nutzer bearbeiteter Text hat Vorrang.
       draft: c.editedBody || c.draft,
@@ -182,7 +189,7 @@ app.post("/api/refresh", async (_req, res, next) => {
 /** Entwurf umschreiben lassen. */
 app.post("/api/cases/:id/rewrite", async (req, res, next) => {
   try {
-    const c = findCase(req.params.id);
+    const c = await findCase(req.params.id);
     if (!c) return res.status(404).json({ error: "Fall nicht gefunden." });
     const instruction = (req.body && req.body.instruction) || "";
     const current = (req.body && req.body.draft) || c.editedBody || c.draft;
@@ -193,21 +200,21 @@ app.post("/api/cases/:id/rewrite", async (req, res, next) => {
     }
     const context = [c.token && `Az. ${c.token}`, c.name, c.insurer, c.calloutBody].filter(Boolean).join("; ");
     const out = await refineDraft({ draft: { body: current }, instruction, context });
-    const state = store.load();
+    const state = await store.load();
     store.setEditedBody(state, c.id, out.body);
-    store.save(state);
+    await store.save(state);
     res.json({ draft: out.body, instruction, model: out.model, note: out.note });
   } catch (err) { next(err); }
 });
 
 /** Bearbeiteten Entwurf zwischenspeichern (damit Tippen nicht verloren geht). */
-app.put("/api/cases/:id/draft", (req, res, next) => {
+app.put("/api/cases/:id/draft", async (req, res, next) => {
   try {
     if (DEMO_MODE) return res.json({ ok: true, demo: true });
-    const state = store.load();
+    const state = await store.load();
     const c = store.setEditedBody(state, req.params.id, (req.body && req.body.draft) || "");
     if (!c) return res.status(404).json({ error: "Fall nicht gefunden." });
-    store.save(state);
+    await store.save(state);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -219,7 +226,7 @@ app.put("/api/cases/:id/draft", (req, res, next) => {
  */
 app.post("/api/cases/:id/approve", async (req, res, next) => {
   try {
-    const c = findCase(req.params.id);
+    const c = await findCase(req.params.id);
     if (!c) return res.status(404).json({ error: "Fall nicht gefunden." });
     const body = (req.body && req.body.draft) || c.editedBody || c.draft;
     if (!body) return res.status(400).json({ error: "Kein Entwurf vorhanden." });
@@ -269,7 +276,7 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
     // angefragt wird. Sie ist zu wichtig, um sie fallenzulassen — aber auch zu
     // unkritisch, um die Freigabe daran scheitern zu lassen. Also vormerken und
     // beim nächsten Lauf nachtragen.
-    const state = store.load();
+    const state = await store.load();
     let notizFehler = null;
     let aufgabeFehler = null;
     try {
@@ -337,7 +344,7 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
         ? null
         : aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : { ok: true, am: new Date().toISOString() };
     }
-    store.save(state);
+    await store.save(state);
 
     const wohin = c.recipEmail || "Empfänger offen";
     let message, hinweis = null;
@@ -386,7 +393,7 @@ app.post("/api/cases/:id/approve", async (req, res, next) => {
  */
 app.post("/api/cases/:id/volltext", async (req, res, next) => {
   try {
-    const c = findCase(req.params.id);
+    const c = await findCase(req.params.id);
     if (!c) return res.status(404).json({ error: "Fall nicht gefunden." });
     if (DEMO_MODE) return res.json({ notizen: c.notizen || [], thread: c.thread || [], demo: true });
 
@@ -400,10 +407,10 @@ app.post("/api/cases/:id/volltext", async (req, res, next) => {
     const notizen = worker.notizenFuerAnsicht(notes);
     const thread = worker.threadFuerAnsicht(mailRes.mails || []);
 
-    const state = store.load();
+    const state = await store.load();
     const g = state.cases[c.id];
     if (g) { g.notizen = notizen; g.thread = thread; g.volltextGeladen = new Date().toISOString(); }
-    store.save(state);
+    await store.save(state);
 
     res.json({ notizen, thread, mailFehler: mailRes.ok ? null : mailRes.error });
   } catch (err) { next(err); }
@@ -419,7 +426,7 @@ app.post("/api/cases/:id/volltext", async (req, res, next) => {
  */
 app.post("/api/cases/:id/nachholen", async (req, res, next) => {
   try {
-    const c = findCase(req.params.id);
+    const c = await findCase(req.params.id);
     if (!c) return res.status(404).json({ error: "Fall nicht gefunden." });
     const schritt = (req.body && req.body.schritt) || "";
     if (!["notiz", "aufgabe", "entwurf"].includes(schritt)) {
@@ -427,7 +434,7 @@ app.post("/api/cases/:id/nachholen", async (req, res, next) => {
     }
     if (DEMO_MODE) return res.json({ ok: true, demo: true });
 
-    const state = store.load();
+    const state = await store.load();
     const g = state.cases[c.id];
     if (!g) return res.status(404).json({ error: "Fall nicht mehr in der Warteschlange." });
     const body = c.editedBody || c.draft;
@@ -474,7 +481,7 @@ app.post("/api/cases/:id/nachholen", async (req, res, next) => {
     state.offeneNacharbeiten = state.offeneNacharbeiten
       .filter(n => n.notizHtml || (n.aufgabeOffen && n.taskId));
 
-    store.save(state);
+    await store.save(state);
     res.json({ ok: true, schritt, ...ergebnis });
   } catch (err) { next(err); }
 });
@@ -484,9 +491,9 @@ app.post("/api/cases/:id/nachholen", async (req, res, next) => {
  * Rein lokal, kostet keinen Pipedrive-Aufruf; beantwortet die Frage „wartet
  * hier noch etwas darauf, nach Pipedrive geschrieben zu werden?".
  */
-app.get("/api/diagnose/nacharbeiten", (_req, res, next) => {
+app.get("/api/diagnose/nacharbeiten", async (_req, res, next) => {
   try {
-    const state = store.load();
+    const state = await store.load();
     res.json({
       offen: state.offeneNacharbeiten.length,
       eintraege: state.offeneNacharbeiten.map(n => ({
@@ -502,14 +509,14 @@ app.get("/api/diagnose/nacharbeiten", (_req, res, next) => {
 /** Überspringen — mit Grund, bleibt nachvollziehbar. */
 app.post("/api/cases/:id/skip", async (req, res, next) => {
   try {
-    const c = findCase(req.params.id);
+    const c = await findCase(req.params.id);
     if (!c) return res.status(404).json({ error: "Fall nicht gefunden." });
     const reason = (req.body && req.body.reason) || c.skipReason || "manuell übersprungen";
     if (DEMO_MODE) {
       c._resolved = c.status === "reguliert" ? "sent" : "skipped";
       return res.json({ ok: true, status: c._resolved, reason });
     }
-    const state = store.load();
+    const state = await store.load();
 
     /*
      * Überspringen wird genauso nach Pipedrive geschrieben wie eine Freigabe:
@@ -556,7 +563,7 @@ app.post("/api/cases/:id/skip", async (req, res, next) => {
         ? null
         : aufgabeFehler ? { ok: false, fehler: aufgabeFehler } : { ok: true, am: new Date().toISOString() };
     }
-    store.save(state);
+    await store.save(state);
 
     const was = [notizFehler && "die Notiz", aufgabeFehler && "das Abschließen der Aufgabe"].filter(Boolean).join(" und ");
     res.json({
@@ -640,7 +647,11 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: err.message });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Sachstands-Cockpit läuft auf Port ${PORT} (Modus: ${DEMO_MODE ? "DEMO" : "LIVE"})`);
   if (!DEMO_MODE) worker.start();
 });
+
+// Damit ein Test den Dienst wieder schließen kann. Ohne das bliebe der
+// Testlauf am lauschenden Server hängen und liefe in die Zeitüberschreitung.
+module.exports = { app, server };

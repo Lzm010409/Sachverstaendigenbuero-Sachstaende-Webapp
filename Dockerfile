@@ -19,6 +19,17 @@ RUN npm install --omit=dev
 COPY server ./server
 COPY public ./public
 
+# Das Datenbankschema und die Skripte. `drizzle/` enthält die erzeugten
+# Migrationen; `starten.mjs` wendet sie beim Hochfahren an, bevor der Server
+# überhaupt lauscht — deshalb braucht das Abbild beides.
+#
+# `scripts/` kommt vollständig mit, nicht nur der Startvorgang: Der Import des
+# Altbestands wird im laufenden Container ausgeführt
+# (`node scripts/import-altbestand.js`, siehe DATENBANK-UMSTELLUNG.md).
+COPY drizzle ./drizzle
+COPY scripts ./scripts
+COPY scripts/starten.mjs ./starten.mjs
+
 ENV NODE_ENV=production
 # PORT wird von Coolify gesetzt; Standard 3000 für lokale Läufe
 ENV PORT=3000
@@ -28,4 +39,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=4s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:${PORT}/api/health || exit 1
 
-CMD ["node", "server/index.js"]
+CMD ["node", "starten.mjs"]

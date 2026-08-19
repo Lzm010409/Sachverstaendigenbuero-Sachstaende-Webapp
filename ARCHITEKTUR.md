@@ -5,6 +5,7 @@ in welcher Reihenfolge entschieden wird und warum es so gebaut ist. Sie richtet 
 an jemanden, der den Code später ändern muss.
 
 - Bedienung und Fachregeln aus Anwendersicht: **[BENUTZUNG.md](BENUTZUNG.md)**
+- Datenbank ausrollen, Import, Rückweg: **[DATENBANK-UMSTELLUNG.md](DATENBANK-UMSTELLUNG.md)**
 - Zugänge, Deployment, offene Punkte: **[STATUS.md](STATUS.md)**
 - Alle Umgebungsvariablen: **[.env.example](.env.example)**
 
@@ -16,10 +17,9 @@ Ein einzelner Node/Express-Dienst liefert die Oberfläche aus `public/` aus, bea
 `/api/*` und betreibt im selben Prozess einen Hintergrundlauf, der einmal täglich die
 fälligen Fälle aus Pipedrive holt, bewertet und Entwürfe in eine Warteschlange legt.
 
-Kein Framework im Frontend, keine Datenbank, kein zweiter Dienst. Der Zustand steht in
-einer JSON-Datei unter `DATA_DIR`. Das ist bewusst so: Der Datenbestand ist klein
-(einige Dutzend Fälle), und alles, was zählt, wird ohnehin nach Pipedrive
-zurückgeschrieben.
+Kein Framework im Frontend. Der Zustand liegt in einer eigenen Postgres-Datenbank, die
+in Coolify eine **eigene Ressource** ist und deshalb gesichert werden kann — vorher waren
+es JSON-Dateien in einem Volume, für das es kein Backup gibt (Abschnitt 7).
 
 ```
                  einmal täglich
@@ -28,7 +28,7 @@ Pipedrive  ──────────────────────►
   Notizen, Mails)                     ├─ analyze.js   entscheiden: anfragen oder nicht?
                                       ├─ draft.js     Entwurf aus dem Baukasten
                                       ├─ ai.js        Entwurf durch das Modell
-                                      └─ store.js     Warteschlange (JSON)
+                                      └─ store.js     Warteschlange (Postgres)
                                              │
     Browser ◄── index.js /api/* ◄────────────┤
        │                                     └─ digest.js  Tagesübersicht per Mail
@@ -55,7 +55,11 @@ Pipedrive  ──────────────────────►
 | `server/graph.js` | Microsoft Graph: Outlook-Entwurf anlegen, Mail versenden |
 | `server/digest.js` | Tägliche Übersicht der offenen Fälle |
 | `server/auth.js` | Anmeldung über Microsoft Entra ID, signiertes Sitzungs-Cookie |
-| `server/store.js` | Warteschlange als JSON, Zusammenführen, Entscheidungen, Aufräumen |
+| `server/store.js` | Warteschlange in Postgres, Zusammenführen, Entscheidungen, Aufräumen |
+| `server/db/schema.js` | Das Datenbankschema (Drizzle), `drizzle/` die erzeugten Migrationen |
+| `server/db/index.js` | Die Verbindung — die einzige Stelle, die `DATABASE_URL` liest |
+| `scripts/starten.mjs` | Startvorgang: Migrationen anwenden, dann den Server starten |
+| `scripts/import-altbestand.js` | Einmaliger Import der alten JSON-Dateien |
 | `server/zeit.js` | Ortszeit über `Intl` — der Container läuft in UTC (Abschnitt 11) |
 | `public/index.html`, `public/app.js` | Oberfläche, mobil und am Schreibtisch |
 
@@ -250,15 +254,61 @@ Dazu kommen Zwischenspeicher in `pipedrive.js` (Organisationen, `ORG_CACHE_STUND
 
 ## 7. Warteschlange und Persistenz
 
-`store.js` hält alles in einer Datei `queue.json` unter `DATA_DIR`. `cases` ist ein
-**Objekt**, indiziert nach Fall-ID.
+Der Bestand liegt in einer **eigenen Postgres-Datenbank**, angesprochen ausschließlich
+über `DATABASE_URL`. Ausrollen, Import und Rückweg: **[DATENBANK-UMSTELLUNG.md](DATENBANK-UMSTELLUNG.md)**.
 
-`normalize()` prüft diese Form bei jedem Laden und rettet Einträge, wenn stattdessen ein
-Array ankommt; `save()` vergleicht zusätzlich die Fallzahl vor und nach dem Serialisieren.
-Hintergrund: Ist `cases` versehentlich ein Array, schreibt `mergeCases()` benannte
-Eigenschaften hinein, die `JSON.stringify` **stillschweigend verwirft** — die Oberfläche
-meldet dann „17 Entwürfe" und zeigt keinen einzigen Fall. Der Schaden ist unauffällig,
-deshalb die zwei Prüfungen.
+| Tabelle | Inhalt |
+|---|---|
+| `fall` | ein Fall der Warteschlange, Schlüssel `task-<Aufgaben-ID>` |
+| `nacharbeit` | Notizen und Aufgabenabschlüsse, die Pipedrive abgelehnt hat |
+| `lauf` | genau eine Zeile: letzter Lauf, Zusammenfassung, Tagesstempel |
+| `verzeichnis_organisation` / `verzeichnis_adresse` | das gelernte Adressverzeichnis |
+
+Vorher waren es zwei JSON-Dateien unter `DATA_DIR`. Der Grund für den Wechsel ist kein
+technischer Ehrgeiz, sondern Coolify: Gesichert werden **Datenbank-Ressourcen**, nicht
+Volumes und nicht Hostpfade. In dieser Anwendung war zudem gar kein Volume eingebunden —
+der Bestand war bei jedem Deploy weg.
+
+**Der Zustand im Speicher ist unverändert geblieben.** `load()` setzt aus den Tabellen
+dasselbe Objekt zusammen, das früher in `queue.json` stand
+(`{ cases, offeneNacharbeiten, lastRun, lastRunSummary, version }`), und `save()` schreibt
+es zurück. Deshalb sind `mergeCases`, `aufraeumen`, `setDecision`, `setEditedBody`,
+`listCases` und `pendingCount` **wortgleich** geblieben: Sie arbeiten auf dem Objekt, nicht
+auf dem Speicher. Asynchron geworden sind nur `load` und `save` — das erzwingt die
+Datenbank, und mehr hat sich an der Schnittstelle nicht geändert.
+
+**Warum Spalten UND `daten jsonb` je Fall.** Ein Fall ist ein Abbild dessen, was Pipedrive
+hergibt — rund vierzig Felder, die sich mit der Fachlogik weiterentwickeln (zuletzt kamen
+`stageId`/`stageName` dazu). Eine Spalte je Feld hieße: eine Migration für jede
+Anzeigeänderung. Deshalb steht der vollständige Fall in `daten`, und die Felder, nach
+denen wirklich gesucht, sortiert und aufgeräumt wird, stehen zusätzlich als Spalten. Sie
+werden bei jedem Schreiben aus `daten` abgeleitet und können deshalb nicht auseinanderlaufen.
+
+**`save()` ersetzt, es ergänzt nicht.** Was nicht mehr im Zustand steht, wird gelöscht.
+Das ist kein Nebeneffekt, sondern der Weg, auf dem `aufraeumen()` und der Phasenfilter
+Fälle wieder loswerden — genau wie beim vollständigen Neuschreiben der Datei.
+
+**Zwei Zeichen, die Postgres nicht speichern kann**, und die JSON klaglos schluckte: das
+Nullbyte `U+0000` und eine einzelne Ersatzstelle (`U+D800`–`U+DFFF` ohne Partner, entsteht
+beim Abschneiden eines Textes mitten in einem Emoji). Beides steckt regelmäßig in
+Mailtexten, die Pipedrive aus Anhängen liefert, und beides ließ vor der Absicherung das
+gesamte `insert` scheitern — mitsamt Lauf und Freigabe. `textBereinigen()` entfernt sie
+beim Schreiben und meldet es im Protokoll. Gültige Zeichenpaare und die übrigen
+Steuerzeichen bleiben unangetastet; das ist gemessen, nicht vermutet.
+
+`normalize()` prüft die Form bei jedem Laden und rettet Einträge, wenn `cases` als
+Array ankommt; der Dateipfad vergleicht zusätzlich die Fallzahl vor und nach dem
+Serialisieren. Hintergrund: Ist `cases` versehentlich ein Array, schreibt `mergeCases()`
+benannte Eigenschaften hinein, die `JSON.stringify` **stillschweigend verwirft** — die
+Oberfläche meldet dann „17 Entwürfe" und zeigt keinen einzigen Fall. Aus einer Tabelle
+kann diese Form nicht mehr kommen; die Prüfung bleibt für den Dateipfad und den Importer
+stehen, und damit ihr Grund nicht mit ihr verschwindet.
+
+**Der Dateipfad ist noch da.** `store.ausDatei()` / `directory.ausDatei()` lesen weiter
+`queue.json` und `directory.json`; fehlt `DATABASE_URL`, läuft die Anwendung ganz darauf
+(mit Warnung beim Start und `"speicher": "datei"` in `/api/health`). Das ist Absicht,
+solange der Import in Produktion nicht verifiziert ist. Sein Ausbau ist ein eigener,
+späterer Schritt.
 
 **Aufräumen.** `aufraeumen()` entfernt entschiedene Fälle nach `AUFBEWAHREN_TAGE`
 (Vorgabe 14). Vorher wuchs die Warteschlange unbegrenzt — `mergeCases()` legt an und
@@ -274,9 +324,15 @@ Notiz an den Deal, der Fingerabdruck zählt Notizen — jede Freigabe machte den
 nächsten Lauf „verändert", die Entscheidung wurde verworfen, und er stand als „Bereits
 angefragt" statt „Freigegeben" da, ohne Link zum Outlook-Entwurf.
 
-Ohne persistentes Volume geht die Warteschlange bei jedem Deployment verloren. Das ist
-ärgerlich (die Entwürfe werden neu erzeugt), aber nicht gefährlich: **doppelte Anfragen
-entstehen dadurch nicht**, weil Kaskadenschritt 4 die Freigabe-Notiz in Pipedrive liest.
+**Der Start legt das Schema selbst an.** `scripts/starten.mjs` wendet vor dem Lauschen die
+Dateien aus `drizzle/` an und merkt sich Name und Prüfsumme in `__migrationen`. Ein
+zweiter Start ändert nichts; eine nachträglich veränderte Migration erzeugt eine Warnung
+statt einer stillschweigenden Heilung. Das Skript benutzt ausschließlich `postgres` —
+drizzle-kit ist eine Entwicklungsabhängigkeit und liegt nicht im Laufzeit-Abbild.
+
+Ginge der Bestand doch einmal verloren, wäre das ärgerlich (die Entwürfe werden neu
+erzeugt), aber nicht gefährlich: **doppelte Anfragen entstehen dadurch nicht**, weil
+Kaskadenschritt 4 die Freigabe-Notiz in Pipedrive liest.
 
 ---
 
@@ -382,7 +438,7 @@ bleibt in beiden Fällen offen — der Healthcheck des Containers braucht ihn.
 
 | Methode | Pfad | Zweck |
 |--:|---|---|
-| GET | `/api/health` | Healthcheck; meldet zusätzlich, welche Anbindungen eingerichtet sind (nur Ja/Nein) |
+| GET | `/api/health` | Healthcheck; meldet zusätzlich, welche Anbindungen eingerichtet sind (nur Ja/Nein) und ob der Speicher `postgres` oder `datei` ist |
 | GET | `/api/diagnose/outlook` | Postfach-Anbindung prüfen (Versand- und Entwurfspostfach) |
 | GET | `/api/diagnose/nacharbeiten` | ausstehende Notizen und Aufgabenabschlüsse |
 | POST | `/api/cases/:id/volltext` | Notizen und Mailrümpfe auf Anforderung nachladen |

@@ -196,7 +196,7 @@ function naechsterVersuchIn(versuche) {
 }
 
 async function nacharbeiten({ jetzt = Date.now(), sofort = false } = {}) {
-  const state = store.load();
+  const state = await store.load();
   if (!state.offeneNacharbeiten.length) return { erledigt: 0, offen: 0 };
 
   const bleibt = [];
@@ -251,7 +251,7 @@ async function nacharbeiten({ jetzt = Date.now(), sofort = false } = {}) {
     if (n.notizHtml || (n.aufgabeOffen && n.taskId)) bleibt.push(n);
   }
   state.offeneNacharbeiten = bleibt;
-  store.save(state);
+  await store.save(state);
   if (erledigt) console.log(`[worker] ${erledigt} Nacharbeit(en) erledigt, ${bleibt.length} offen.`);
   return { erledigt, offen: bleibt.length };
 }
@@ -298,7 +298,7 @@ async function runOnce({ today = new Date(), force = false } = {}) {
     // Bereits bekannte Fälle nach Aktenzeichen, um unveränderte Entwürfe
     // wiederzuverwenden (siehe Kostenbremse weiter unten).
     const priorByToken = new Map(
-      store.listCases(store.load()).filter(c => c.token).map(c => [c.token, c])
+      store.listCases(await store.load()).filter(c => c.token).map(c => [c.token, c])
     );
 
     // Wiedervorlage-Fenster: Ein Fall, der vor weniger als FALL_TTL_STUNDEN
@@ -499,7 +499,7 @@ async function runOnce({ today = new Date(), force = false } = {}) {
     // --- Zweiter Durchgang: Adressverzeichnis anwenden -----------------------
     // Erst lernen, welche Adresse zu welcher Kanzlei gehört, dann Fälle ohne
     // eigene Korrespondenz damit auffüllen und deren Entwurf nachziehen.
-    const dir = directory.load();
+    const dir = await directory.load();
     for (const c of fresh) {
       // Nur lernen, wenn die Organisation aus dem Feld „Rechtsanwalt" stammt —
       // aus Mails abgeleitete Namen könnten sonst falsche Adressen verknüpfen.
@@ -510,7 +510,7 @@ async function runOnce({ today = new Date(), force = false } = {}) {
         });
       }
     }
-    directory.save(dir);
+    await directory.save(dir);
 
     fresh = fresh.map(c => {
       if (c.recipEmail || !c.recipOrg) return c;
@@ -542,7 +542,7 @@ async function runOnce({ today = new Date(), force = false } = {}) {
       return filled;
     }).map(c => { const { __ctx, ...rest } = c; return rest; });
 
-    const state = store.load();
+    const state = await store.load();
     // Tokenverbrauch des Laufs aufsummieren, damit die Kosten nachvollziehbar sind.
     // Preise Sonnet 5 (Einführungspreis): 2 $ / 10 $ je Mio. Token; gecachte
     // Eingabe kostet ein Zehntel.
@@ -629,7 +629,7 @@ async function runOnce({ today = new Date(), force = false } = {}) {
     // Tägliche Übersicht — prüft selbst, ob heute schon eine raus ist.
     try {
       const d = await digest.maybeSendDigest(state, store.listCases(state));
-      if (d.gesendet) store.save(state);          // Stempel festhalten
+      if (d.gesendet) await store.save(state);          // Stempel festhalten
       else if (d.grund && !/bereits|vor \d+ Uhr/.test(d.grund)) {
         console.log(`[digest] nicht versendet: ${d.grund}`);
       }
@@ -637,17 +637,17 @@ async function runOnce({ today = new Date(), force = false } = {}) {
       console.warn("[digest] Versand fehlgeschlagen:", err.message);
     }
 
-    store.save(state);
+    await store.save(state);
     lastError = null;
 
     await maybeNotify(state.lastRunSummary, pending);
     return state.lastRunSummary;
   } catch (err) {
     lastError = err.message;
-    const state = store.load();
+    const state = await store.load();
     state.lastRun = startedAt;
     state.lastRunSummary = { error: err.message };
-    store.save(state);
+    await store.save(state);
     throw err;
   } finally {
     running = false;
@@ -717,15 +717,15 @@ function start() {
     catch (err) { console.warn("[worker] Nacharbeiten fehlgeschlagen:", err.message); }
 
     try {
-      const state = store.load();
+      const state = await store.load();
       const heute = zeit.heuteISO();
       const stunde = zeit.stunde();
 
       if (state.laufGemachtAm !== heute && stunde >= laufStunde) {
         await runOnce();
-        const nachher = store.load();
+        const nachher = await store.load();
         nachher.laufGemachtAm = heute;
-        store.save(nachher);
+        await store.save(nachher);
       } else {
         // Kein Lauf fällig — die Übersichtsmail hat eine eigene Uhrzeit und
         // wird deshalb trotzdem geprüft. Ohne Versand kostet das nichts.
@@ -735,7 +735,7 @@ function start() {
         // abbrechen. Die Übersicht ist Beiwerk, der Lauf ist die Hauptsache.
         try {
           const d = await digest.maybeSendDigest(state, store.listCases(state));
-          if (d.gesendet) store.save(state);
+          if (d.gesendet) await store.save(state);
         } catch (err) {
           console.warn("[digest] nicht versendet:", err.message);
         }

@@ -288,15 +288,21 @@ In `PIPEDRIVE_BCC_DROPBOX` genügt ein Beispiel dieser Adresse (mit oder ohne
 `+deal…`) — die Deal-Nummer setzt die App je Fall selbst ein. Ist die Variable leer,
 wird kein BCC gesetzt und der Entwurf trotzdem angelegt.
 
-**Das persistente Volume.** `DATA_DIR=/data` ist gesetzt; in Coolify dazu unter
-*Application → Persistent Storage → + Add → **Volume Mount*** anlegen: Name z. B.
-`sachstaende-data`, Mount Path `/data`, Host-Pfad leer lassen (Coolify legt ein
-benanntes Docker-Volume an). *Directory Mount* wäre ein Bind-Mount auf einen
-Serverpfad, *File Mount* nur für einzelne Dateien — für `/data` ist der Volume Mount
-richtig. Danach einmal *Redeploy*. Ohne Volume wird die Warteschlange bei jedem
-Deployment geleert und alle Entwürfe werden neu erzeugt — rund 30 Cent pro
-Deployment. **Doppelte Anfragen entstehen dadurch nicht**, dafür sorgt die Notiz in
-Pipedrive.
+**Die Datenbank.** Der gesamte Bestand — Warteschlange, ausstehende Nacharbeiten und
+das gelernte Adressverzeichnis — liegt in einer eigenen Postgres-Datenbank. In Coolify
+ist das eine **eigene Ressource** neben der Anwendung, und nur solche Ressourcen lassen
+sich dort sichern; für ein Volume gibt es kein Backup. Die Anwendung spricht die
+Datenbank ausschließlich über `DATABASE_URL` an.
+
+Wie sie angelegt wird, in welcher Reihenfolge deployed wird, wie der Altbestand
+übernommen wird und wie man zurückkommt, steht vollständig in
+**[DATENBANK-UMSTELLUNG.md](DATENBANK-UMSTELLUNG.md)**.
+
+Ob es im laufenden Betrieb stimmt, sagt `GET /api/health`: Dort muss
+`"speicher": "postgres"` stehen. Steht dort `"datei"`, ist `DATABASE_URL` nicht im
+Container angekommen — die Anwendung läuft dann auf dem alten Dateispeicher und verliert
+ihre Warteschlange beim nächsten Deployment. **Doppelte Anfragen entstehen dadurch
+nicht**, dafür sorgt die Notiz in Pipedrive; die Entwürfe würden aber neu erzeugt.
 
 ---
 
@@ -357,7 +363,7 @@ in einem signierten Cookie (`HttpOnly`, `SameSite=Lax`, hinter HTTPS zusätzlich
 | Alle Fälle „Empfänger unklar" | Im Deal fehlt das Feld „Rechtsanwalt" bzw. eine Versicherung. |
 | Entwürfe klingen unpassend | Kategorie am Fall prüfen und den Schwerpunkt in `server/rules.js` anpassen. |
 | Häufig „KI-Entwurf verworfen" | Der Prüfschritt greift zu oft — die Prompt-Regeln müssen nachgeschärft werden. |
-| Nach einem Deployment ist die Liste leer | Fehlendes Volume (Abschnitt 6). Der nächste Lauf füllt sie wieder. |
+| Nach einem Deployment ist die Liste leer | Meldet `/api/health` `"speicher": "datei"`, fehlt `DATABASE_URL` (Abschnitt 6). Der nächste Lauf füllt die Liste wieder. |
 
 **Logs ansehen:** Coolify → Application → *Logs*. Aussagekräftige Zeilen beginnen mit
 `[worker]`, `[ai]` oder `[auth]`.

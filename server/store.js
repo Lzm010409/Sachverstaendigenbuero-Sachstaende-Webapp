@@ -3,14 +3,28 @@
 /*
  * Persistenter Speicher für die Freigabe-Warteschlange.
  *
- * Eine JSON-Datei genügt hier (wenige hundert Fälle, ein Nutzer) und hält den
- * Betrieb einfach: kein Datenbank-Container, ein Volume reicht.
- * Pfad über DATA_DIR steuerbar — in Coolify auf ein persistentes Volume legen,
- * sonst ist die Warteschlange nach jedem Deploy leer.
+ * Der Bestand liegt in einer eigenen Postgres-Datenbank, angesprochen
+ * ausschließlich über `DATABASE_URL`. Vorher waren es JSON-Dateien unter
+ * DATA_DIR. Der Wechsel hat einen einzigen Grund: Coolify sichert
+ * Datenbank-Ressourcen, aber keine Volumes und keine Hostpfade. Ohne
+ * eingebundenes Volume war der Bestand nach jedem Deploy ohnehin verloren.
+ *
+ * Der Dateipfad ist bewusst noch da (`ausDatei`, `inDatei`). Er dient dem
+ * Importer und greift, solange `DATABASE_URL` fehlt — im Demo-Modus und in
+ * Tests. Sein Ausbau ist ein eigener, späterer Schritt, erst wenn der Import
+ * in Produktion nachweislich gelaufen ist.
+ *
+ * Asynchron sind nur `load` und `save`: Das erzwingt die Datenbank. Alles
+ * andere — mergeCases, aufraeumen, setDecision, setEditedBody, listCases,
+ * pendingCount — arbeitet unverändert auf dem Zustandsobjekt im Speicher und
+ * bleibt synchron. Die Fachlogik ist von diesem Umbau nicht berührt.
  */
 
 const fs = require("fs");
 const path = require("path");
+const { notInArray, asc, sql } = require("drizzle-orm");
+const datenbank = require("./db");
+const { fall, nacharbeit, lauf } = require("./db/schema");
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const FILE = path.join(DATA_DIR, "queue.json");
@@ -26,14 +40,171 @@ function emptyState() {
   return { cases: {}, offeneNacharbeiten: [], lastRun: null, lastRunSummary: null, version: 1 };
 }
 
-function load() {
-  let raw;
+/** Läuft der Speicher gegen Postgres oder noch gegen die Datei? */
+function nutztDatenbank() {
+  return datenbank.istEingerichtet();
+}
+
+// --- Umrechnung zwischen Zustandsobjekt und Tabellen ------------------------
+
+function zuDatum(wert) {
+  if (!wert) return null;
+  const t = Date.parse(wert);
+  return Number.isFinite(t) ? new Date(t) : null;
+}
+
+function zuIso(wert) {
+  if (!wert) return null;
+  return wert instanceof Date ? wert.toISOString() : String(wert);
+}
+
+function zuZahl(wert) {
+  const n = Number(wert);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+/*
+ * Zeichen, die Postgres nicht speichern kann, entfernen.
+ *
+ * Zwei Sorten brechen jedes `insert`, und zwar hart genug, um einen ganzen
+ * Lauf mitsamt aller Freigaben abzubrechen:
+ *
+ *   - das Nullbyte U+0000 — weder in `text` noch in `jsonb` zulässig
+ *   - eine einzelne Ersatzstelle (U+D800–U+DFFF ohne Partner) — kein gültiges
+ *     UTF-8, entsteht beim Abschneiden eines Textes mitten in einem Emoji
+ *
+ * Beides steckt regelmäßig in Mailtexten, die Pipedrive aus Anhängen und
+ * älteren Systemen liefert. Die JSON-Datei hat es klaglos geschluckt; deshalb
+ * fällt es erst beim Wechsel auf die Datenbank auf, und deshalb muss es hier
+ * abgefangen werden statt am Fall.
+ *
+ * Gültige Zeichenpaare (Emoji) und die übrigen Steuerzeichen bleiben
+ * unangetastet — geprüft, nicht vermutet.
+ */
+const EINZELNE_ERSATZSTELLE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function textBereinigen(text) {
+  return text.replace(/\u0000/g, "").replace(EINZELNE_ERSATZSTELLE, "\uFFFD");
+}
+
+function bereinigen(wert, bericht) {
+  if (typeof wert === "string") {
+    const sauber = textBereinigen(wert);
+    if (sauber !== wert) bericht.anzahl++;
+    return sauber;
+  }
+  if (Array.isArray(wert)) return wert.map(w => bereinigen(w, bericht));
+  if (wert && typeof wert === "object") {
+    const neu = {};
+    for (const [k, v] of Object.entries(wert)) neu[k] = bereinigen(v, bericht);
+    return neu;
+  }
+  return wert;
+}
+
+/*
+ * `excluded.<spalte>` in einem ON-CONFLICT-Zweig: der Wert, der eingefügt
+ * werden sollte. Drizzle bietet dafür keinen eigenen Ausdruck, deshalb hier
+ * einmal von Hand — die Spaltennamen stammen aus dem erzeugten Schema und
+ * nicht aus einer Eingabe.
+ */
+function sqlAusgeschlossen(spalte) {
+  return sql.raw(`excluded."${spalte}"`);
+}
+
+/*
+ * Ein Fall als Tabellenzeile.
+ *
+ * `daten` ist maßgeblich und enthält den vollständigen Fall; die übrigen
+ * Spalten werden bei jedem Schreiben daraus abgeleitet. Sie sind für Indizes,
+ * für Auswertungen in SQL und dafür, dass ein Datenbank-Auszug lesbar bleibt —
+ * nie für das Zurücklesen. Deshalb können sie auch nicht auseinanderlaufen.
+ */
+function fallZuZeile(c, bericht = { anzahl: 0 }) {
+  // Erst bereinigen, dann die Spalten daraus ableiten — so kann auch keine
+  // Textspalte ein Zeichen enthalten, das die Zeile ablehnen ließe.
+  c = bereinigen(c, bericht);
+  return {
+    id: c.id,
+    token: c.token || null,
+    dealId: zuZahl(c.dealId),
+    aufgabeId: zuZahl(c.taskId),
+    status: c.status || null,
+    entscheidung: c.decision || null,
+    entschiedenAm: zuDatum(c.decidedAt),
+    eingereihtAm: zuDatum(c.queuedAt),
+    analysiertAm: zuDatum(c.analyzedAt),
+    brauchtEntwurf: Boolean(c.needsDraft),
+    fingerabdruck: c.fingerprint || null,
+    phaseId: zuZahl(c.stageId),
+    phaseName: c.stageName || null,
+    daten: c,
+    aktualisiertAm: new Date()
+  };
+}
+
+function nacharbeitZuZeile(n, reihenfolge, bericht = { anzahl: 0 }) {
+  n = bereinigen(n, bericht);
+  return {
+    reihenfolge,
+    fallId: n.caseId || null,
+    dealId: zuZahl(n.dealId),
+    aufgabeId: zuZahl(n.taskId),
+    token: n.token || null,
+    notizOffen: Boolean(n.notizHtml),
+    aufgabeOffen: Boolean(n.aufgabeOffen),
+    versuche: zuZahl(n.versuche) || 0,
+    naechsterVersuch: zuDatum(n.naechsterVersuch),
+    daten: n
+  };
+}
+
+// --- Lesen ------------------------------------------------------------------
+
+/** Der alte Lesepfad: der Zustand, wie er in queue.json steht. */
+function ausDatei() {
   try {
-    raw = JSON.parse(fs.readFileSync(FILE, "utf8"));
+    return normalize(JSON.parse(fs.readFileSync(FILE, "utf8")));
   } catch {
     return emptyState();
   }
-  return normalize(raw);
+}
+
+async function ausDatenbank() {
+  const db = datenbank.db();
+  const [faelle, nacharbeiten, koepfe] = await Promise.all([
+    // Nach id sortiert, damit die Reihenfolge festliegt. Eine Tabelle kennt
+    // keine Einfügereihenfolge; ohne Sortierung stünden gleichrangige Fälle
+    // (dieselbe Entscheidung, dieselbe Wartezeit) bei jedem Laden anders in
+    // der Liste — die Anwendung sortiert zwar, aber stabil.
+    db.select().from(fall).orderBy(asc(fall.id)),
+    db.select().from(nacharbeit).orderBy(asc(nacharbeit.reihenfolge)),
+    db.select().from(lauf)
+  ]);
+
+  const state = emptyState();
+  for (const zeile of faelle) {
+    if (zeile && zeile.daten && zeile.daten.id) state.cases[zeile.daten.id] = zeile.daten;
+  }
+  state.offeneNacharbeiten = nacharbeiten.map(z => z.daten).filter(Boolean);
+
+  const kopf = koepfe[0];
+  if (kopf) {
+    state.version = kopf.version || 1;
+    state.lastRun = zuIso(kopf.letzterLauf);
+    state.lastRunSummary = kopf.zusammenfassung || null;
+    // Die beiden Tagesstempel gibt es erst, wenn ein Lauf bzw. eine Übersicht
+    // stattgefunden hat. Sie werden mit `!==` gegen den heutigen Tag geprüft —
+    // ein gesetztes `null` verhielte sich zwar gleich, aber ein fehlendes Feld
+    // entspricht dem bisherigen Zustand genauer.
+    if (kopf.laufGemachtAm) state.laufGemachtAm = kopf.laufGemachtAm;
+    if (kopf.digestGesendetAm) state.digestGesendetAm = kopf.digestGesendetAm;
+  }
+  return normalize(state);
+}
+
+async function load() {
+  return nutztDatenbank() ? ausDatenbank() : ausDatei();
 }
 
 /**
@@ -44,7 +215,11 @@ function load() {
  * laufenden Prozess sah alles richtig aus, aber JSON.stringify verwirft solche
  * Eigenschaften. Ergebnis: Die Lauf-Zusammenfassung meldete Entwürfe, die
  * gespeicherte Liste blieb leer, und niemand bekam eine Fehlermeldung.
- * Deshalb wird die Form hier einmal geradegezogen statt blind vertraut.
+ *
+ * Aus der Datenbank kann diese Form nicht mehr kommen — eine Tabelle ist eine
+ * Tabelle. Die Prüfung bleibt trotzdem stehen, weil sie auch für den alten
+ * Dateipfad und für den Importer gilt, und weil der Grund für sie sonst mit
+ * ihr verschwände.
  */
 function normalize(raw) {
   const state = Object.assign(emptyState(), raw && typeof raw === "object" ? raw : {});
@@ -54,7 +229,7 @@ function normalize(raw) {
     const gerettet = {};
     // Aus einem Array lassen sich die Einträge mit id noch übernehmen.
     if (Array.isArray(c)) {
-      for (const fall of c) if (fall && fall.id) gerettet[fall.id] = fall;
+      for (const fallEintrag of c) if (fallEintrag && fallEintrag.id) gerettet[fallEintrag.id] = fallEintrag;
     }
     console.warn(`[store] Feld "cases" hatte die Form ${Array.isArray(c) ? "Array" : typeof c}`
       + ` statt Objekt und wurde repariert (${Object.keys(gerettet).length} Fälle übernommen).`);
@@ -78,7 +253,10 @@ function normalize(raw) {
   return state;
 }
 
-function save(state) {
+// --- Schreiben --------------------------------------------------------------
+
+/** Der alte Schreibpfad. Bleibt für den Betrieb ohne DATABASE_URL. */
+function inDatei(state) {
   ensureDir();
   // Sicherung gegen stillen Datenverlust: Nach dem Serialisieren muss die
   // Anzahl der Fälle noch stimmen. Weicht sie ab, ist die Form des Zustands
@@ -90,13 +268,92 @@ function save(state) {
     console.error(`[store] FEHLER: ${erwartet} Fälle im Speicher, aber nur ${tatsaechlich}`
       + ` im JSON. Der Zustand wird repariert und erneut gespeichert.`);
     state.cases = Object.assign({}, state.cases);   // Array → einfaches Objekt
-    return save(state);
+    return inDatei(state);
   }
   const tmp = FILE + ".tmp";
   fs.writeFileSync(tmp, json);
   fs.renameSync(tmp, FILE); // atomar — kein halb geschriebener Zustand
   return state;
 }
+
+// Postgres verträgt 65535 Parameter je Anweisung. Bei fünfzehn Spalten wären
+// das über viertausend Fälle; in Blöcken zu schreiben kostet nichts und nimmt
+// dieser Grenze jede Bedeutung.
+const BLOCK = 200;
+
+async function inDatenbank(state) {
+  const db = datenbank.db();
+  const faelle = Object.values(state.cases || {}).filter(c => c && c.id);
+  const ids = faelle.map(c => c.id);
+  const nacharbeiten = (state.offeneNacharbeiten || []).filter(Boolean);
+  const bericht = { anzahl: 0 };
+
+  await db.transaction(async (tx) => {
+    /*
+     * Ein `save` schrieb bisher die ganze Datei neu — genau diese Bedeutung
+     * behält es hier: Was nicht mehr im Zustand steht, ist gelöscht. Das ist
+     * kein Nebeneffekt, sondern der Weg, auf dem `aufraeumen` und der
+     * Phasenfilter Fälle wieder loswerden.
+     */
+    if (ids.length) await tx.delete(fall).where(notInArray(fall.id, ids));
+    else await tx.delete(fall);
+
+    for (let i = 0; i < faelle.length; i += BLOCK) {
+      const block = faelle.slice(i, i + BLOCK).map(c => fallZuZeile(c, bericht));
+      await tx.insert(fall).values(block).onConflictDoUpdate({
+        target: fall.id,
+        set: {
+          token: sqlAusgeschlossen("token"), dealId: sqlAusgeschlossen("deal_id"),
+          aufgabeId: sqlAusgeschlossen("aufgabe_id"), status: sqlAusgeschlossen("status"),
+          entscheidung: sqlAusgeschlossen("entscheidung"), entschiedenAm: sqlAusgeschlossen("entschieden_am"),
+          eingereihtAm: sqlAusgeschlossen("eingereiht_am"), analysiertAm: sqlAusgeschlossen("analysiert_am"),
+          brauchtEntwurf: sqlAusgeschlossen("braucht_entwurf"), fingerabdruck: sqlAusgeschlossen("fingerabdruck"),
+          phaseId: sqlAusgeschlossen("phase_id"), phaseName: sqlAusgeschlossen("phase_name"),
+          daten: sqlAusgeschlossen("daten"), aktualisiertAm: sqlAusgeschlossen("aktualisiert_am")
+        }
+      });
+    }
+
+    // Die Nacharbeiten haben keinen fachlichen Schlüssel — sie sind eine
+    // Liste, die als Ganzes fortgeschrieben wird. Sie ist kurz (im Regelfall
+    // leer, im Ausnahmefall eine Handvoll), deshalb ist vollständiges
+    // Ersetzen hier das Ehrlichste.
+    await tx.delete(nacharbeit);
+    if (nacharbeiten.length) {
+      await tx.insert(nacharbeit).values(nacharbeiten.map((n, i) => nacharbeitZuZeile(n, i, bericht)));
+    }
+
+    await tx.insert(lauf).values({
+      id: 1,
+      version: state.version || 1,
+      letzterLauf: zuDatum(state.lastRun),
+      zusammenfassung: state.lastRunSummary || null,
+      laufGemachtAm: state.laufGemachtAm || null,
+      digestGesendetAm: state.digestGesendetAm || null
+    }).onConflictDoUpdate({
+      target: lauf.id,
+      set: {
+        version: sqlAusgeschlossen("version"),
+        letzterLauf: sqlAusgeschlossen("letzter_lauf"),
+        zusammenfassung: sqlAusgeschlossen("zusammenfassung"),
+        laufGemachtAm: sqlAusgeschlossen("lauf_gemacht_am"),
+        digestGesendetAm: sqlAusgeschlossen("digest_gesendet_am")
+      }
+    });
+  });
+
+  if (bericht.anzahl) {
+    console.warn(`[store] ${bericht.anzahl} Textfeld(er) enthielten Zeichen, die Postgres nicht`
+      + ` speichern kann (Nullbyte oder einzelne Ersatzstelle). Sie wurden beim Schreiben entfernt.`);
+  }
+  return state;
+}
+
+async function save(state) {
+  return nutztDatenbank() ? inDatenbank(state) : inDatei(state);
+}
+
+// --- Fachlogik auf dem Zustandsobjekt (unverändert, synchron) ---------------
 
 /**
  * Führt neu analysierte Fälle mit dem bestehenden Zustand zusammen.
@@ -210,4 +467,9 @@ function pendingCount(state) {
   return listCases(state).filter(c => !c.decision && c.needsDraft).length;
 }
 
-module.exports = { load, save, mergeCases, aufraeumen, setDecision, setEditedBody, listCases, pendingCount, emptyState, FILE, DATA_DIR };
+module.exports = {
+  load, save, mergeCases, aufraeumen, setDecision, setEditedBody, listCases, pendingCount, emptyState,
+  FILE, DATA_DIR,
+  // Für den Importer und die Selbstauskunft der Anwendung.
+  ausDatei, inDatei, normalize, nutztDatenbank, fallZuZeile, nacharbeitZuZeile, textBereinigen
+};

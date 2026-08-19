@@ -4,16 +4,59 @@
 (function () {
   "use strict";
 
-  const STATUS_LABEL = {
-    faellig: "Fällig", ueberfaellig: "Überfällig", rueckfrage: "Rückfrage offen",
-    reguliert: "Reguliert", unklar: "Empfänger unklar", sent: "Freigegeben", skipped: "Übersprungen",
-    abwarten: "Abwarten", bereits_angefragt: "Bereits angefragt"
+  /*
+   * Die Anzeige hat zwei Achsen, nicht mehr eine.
+   *
+   *   AUFGABE — was ist zu TUN? Bestimmt Chip, Farbe, Filter und Reihenfolge.
+   *   LAGE    — worum geht es fachlich? Steht klein daneben und erklärt nur.
+   *
+   * Vorher trug ein einziger Status beides. Das ging aus zwei Gründen schief:
+   * „Empfänger unklar" stand gleichrangig neben „Überfällig", obwohl das eine
+   * ein Hindernis im Datenbestand und das andere eine Zeitangabe ist — und
+   * genau solche Fälle haben keinen Entwurf und tauchten deshalb in der
+   * Arbeitsliste GAR NICHT auf, obwohl sie die einzigen sind, die eine Eingabe
+   * in Pipedrive verlangen.
+   */
+  const AUFGABE_LABEL = {
+    pruefen: "Prüfen", klaeren: "Klären", abschliessen: "Abschließen", ruht: "Ruht",
+    sent: "Freigegeben", skipped: "Übersprungen"
   };
-  const STRIPE = {
-    faellig: "var(--accent)", ueberfaellig: "var(--critical)", rueckfrage: "var(--warn)",
-    reguliert: "var(--ok)", unklar: "var(--border-strong)",
-    abwarten: "var(--warn)", bereits_angefragt: "var(--ok)"
+  const AUFGABE_STRIPE = {
+    pruefen: "var(--accent)", klaeren: "var(--critical)",
+    abschliessen: "var(--ok)", ruht: "var(--warn)"
   };
+  const LAGE_LABEL = {
+    erstanfrage: "Erstanfrage", nachfassen: "Nachfassen", unbeantwortet: "Ohne Antwort",
+    rueckfrage: "Rückfrage an uns", verfahren: "Verfahren läuft", abwarten: "Abwarten vermerkt",
+    frist: "Frist läuft", reguliert: "Reguliert", kein_empfaenger: "Kein Empfänger"
+  };
+
+  /*
+   * Fälle aus der Zeit vor dieser Umstellung haben nur `status`. Sie werden
+   * hier übersetzt statt in der Datenbank umgeschrieben: Beim nächsten Lauf
+   * bringt der Server die neuen Felder ohnehin mit, und eine Wanderung des
+   * Bestands für eine reine Anzeigefrage wäre unverhältnismäßig.
+   */
+  const AUS_STATUS = {
+    reguliert: ["abschliessen", "reguliert"],
+    rueckfrage: ["pruefen", "rueckfrage"],
+    abwarten: ["ruht", "abwarten"],
+    bereits_angefragt: ["ruht", "frist"],
+    unklar: ["klaeren", "kein_empfaenger"],
+    faellig: ["pruefen", "erstanfrage"],
+    ueberfaellig: ["pruefen", "unbeantwortet"]
+  };
+  function aufgabeVon(c) {
+    if (c._resolved) return c._resolved;                    // "sent" | "skipped"
+    if (c.aufgabe) return c.aufgabe;
+    return (AUS_STATUS[c.status] || ["pruefen", "erstanfrage"])[0];
+  }
+  function lageVon(c) {
+    if (c.lage) return c.lage;
+    return (AUS_STATUS[c.status] || ["pruefen", "erstanfrage"])[1];
+  }
+  // Reihenfolge in der Liste: erst was Arbeit macht, dann was wartet.
+  const RANG = { pruefen: 0, abschliessen: 1, klaeren: 2, ruht: 3, sent: 4, skipped: 4 };
 
   const listEl = document.getElementById("list");
   const detailEl = document.getElementById("detail");
@@ -23,7 +66,7 @@
 
   let CASES = [];
   let activeId = null;
-  let filter = "offen";
+  let filter = "zutun";
 
   document.getElementById("today").textContent = new Date().toLocaleDateString("de-DE", {
     weekday: "short", day: "2-digit", month: "2-digit", year: "numeric"
@@ -64,9 +107,15 @@
     return res.json();
   }
 
-  /** Braucht dieser Fall eine Entscheidung von mir? */
+  /** Wartet dieser Fall auf eine Entscheidung im Cockpit? */
   function isPending(c) {
-    return !c._resolved && Boolean(c.draft);
+    const a = aufgabeVon(c);
+    return !c._resolved && (a === "pruefen" || a === "abschliessen");
+  }
+
+  /** Kommt die Anwendung ohne eine Eingabe in Pipedrive nicht weiter? */
+  function istZuKlaeren(c) {
+    return !c._resolved && aufgabeVon(c) === "klaeren";
   }
 
   /**
@@ -89,37 +138,48 @@
 
   function visible(c) {
     if (filter === "alle") return true;
-    // „Erledigt" heißt entschieden — freigegeben oder übersprungen. Vorher stand
-    // hier !isPending(c); damit galt jeder Fall ohne Entwurf als erledigt, auch
-    // „Empfänger unklar" und „Bereits angefragt". Die sind aber nicht erledigt,
-    // sondern nur nicht zu entscheiden — „Empfänger unklar" verlangt sogar eine
-    // Ergänzung in Pipedrive. Sie stehen jetzt unter „Alle".
+    // „Erledigt" heißt entschieden — freigegeben oder übersprungen; niemals
+    // bloß „ohne Entwurf". Ein Fall ohne Empfänger ist nicht erledigt, sondern
+    // wartet auf eine Eingabe in Pipedrive — der hat jetzt seinen eigenen Filter.
     if (filter === "erledigt") return Boolean(c._resolved);
-    if (!inArbeitsliste(c)) return false;
-    if (filter === "ueberfaellig") return isPending(c) && c.status === "ueberfaellig";
-    if (filter === "rueckfrage") return isPending(c) && c.status === "rueckfrage";
-    return true;                                             // "offen"
+    if (filter === "klaeren") return istZuKlaeren(c);
+    if (filter === "ruht") return !c._resolved && aufgabeVon(c) === "ruht";
+    return inArbeitsliste(c);                                // "zutun"
+  }
+
+  /*
+   * Reihenfolge der Liste: erst was Arbeit macht, dann was wartet, innerhalb
+   * dessen die längste Wartezeit zuerst. Der Server sortiert nur grob
+   * (entschieden nach hinten); die Handlungsachse kennt erst die Oberfläche.
+   */
+  function sortiere() {
+    CASES.sort((a, b) => {
+      const ra = RANG[aufgabeVon(a)] ?? 9, rb = RANG[aufgabeVon(b)] ?? 9;
+      if (ra !== rb) return ra - rb;
+      return (b.wait || 0) - (a.wait || 0);
+    });
   }
 
   function renderKpis() {
-    const pending = CASES.filter(isPending);
-    const ueber = pending.filter(c => c.status === "ueberfaellig").length;
-    const rueck = pending.filter(c => c.status === "rueckfrage").length;
-    // Muss zum Filter „Erledigt" passen: entschieden, nicht bloß „ohne Entwurf".
+    // Dieselben vier Zahlen wie die vier Filter — sonst zeigt die Kopfzeile
+    // etwas anderes an als die Liste darunter.
+    const zutun = CASES.filter(isPending).length;
+    const klaeren = CASES.filter(istZuKlaeren).length;
+    const ruht = CASES.filter(c => !c._resolved && aufgabeVon(c) === "ruht").length;
     const done = CASES.filter(c => c._resolved).length;
     const compact = document.getElementById("kpisCompact");
     if (compact) {
       compact.textContent = [
-        `${pending.length} zu prüfen`,
-        ueber ? `${ueber} überfällig` : "",
-        rueck ? `${rueck} Rückfrage${rueck === 1 ? "" : "n"}` : "",
+        `${zutun} zu tun`,
+        klaeren ? `${klaeren} zu klären` : "",
+        ruht ? `${ruht} ruht` : "",
         done ? `${done} erledigt` : ""
       ].filter(Boolean).join(" · ");
     }
     kpisEl.innerHTML =
-      `<div class="kpi"><b>${pending.length}</b><span>zu prüfen</span></div>` +
-      `<div class="kpi crit"><b>${ueber}</b><span>überfällig</span></div>` +
-      `<div class="kpi warn"><b>${rueck}</b><span>Rückfragen</span></div>` +
+      `<div class="kpi"><b>${zutun}</b><span>zu tun</span></div>` +
+      `<div class="kpi crit"><b>${klaeren}</b><span>zu klären</span></div>` +
+      `<div class="kpi warn"><b>${ruht}</b><span>ruht</span></div>` +
       `<div class="kpi"><b>${done}</b><span>erledigt</span></div>`;
   }
 
@@ -128,25 +188,25 @@
     const shown = CASES.filter(visible);
     if (!shown.length) {
       listEl.innerHTML = `<div class="empty" style="height:auto;padding:30px 16px;font-size:13px;">${
-        filter === "offen" ? "Nichts zu prüfen — alles erledigt. 🎉" : "Keine Fälle in diesem Filter."}</div>`;
+        filter === "zutun" ? "Nichts zu tun — alles erledigt. 🎉" : "Keine Fälle in diesem Filter."}</div>`;
       return;
     }
     shown.forEach(c => {
-      const st = c._resolved || c.status;
+      const a = aufgabeVon(c);
       const btn = document.createElement("button");
       btn.className = "case" + (c.id === activeId ? " active" : "") + (c._resolved ? " done" : "");
-      btn.style.setProperty("--stripe", STRIPE[c.status] || "var(--border-strong)");
-      const recip = c.recipOrg ? esc(c.recipOrg) : "— kein Empfänger —";
+      btn.style.setProperty("--stripe", AUFGABE_STRIPE[a] || "var(--border-strong)");
+      const recip = c.recipOrg ? esc(c.recipOrg) : "— keine Kanzlei hinterlegt —";
       const waitTxt = c._resolved
-        ? STATUS_LABEL[c._resolved]
+        ? AUFGABE_LABEL[c._resolved]
         : (c.wait === 0 ? "heute fällig" : "wartet seit " + c.wait + " Tg.");
       btn.innerHTML =
         `<div class="row1"><span class="az mono">${esc(c.token)}</span>` +
-        `<span class="chip ${st}">${STATUS_LABEL[st]}</span></div>` +
+        `<span class="chip ${a}">${AUFGABE_LABEL[a] || a}</span></div>` +
         `<div class="name">${esc(c.name)}</div>` +
         `<div class="recip">${recip}</div>` +
-        `<div class="row3"><span class="wait">${waitTxt}</span>` +
-        `<span class="wait">fällig ${esc(c.dueDE || c.due)}</span></div>`;
+        `<div class="row3"><span class="lage">${esc(LAGE_LABEL[lageVon(c)] || "")}</span>` +
+        `<span class="wait">${waitTxt}</span></div>`;
       btn.addEventListener("click", () => selectCase(c.id));
       listEl.appendChild(btn);
     });
@@ -323,7 +383,7 @@
     // sehen, was passiert ist, und dann selbst entscheiden weiterzugehen.
     const next = naechsterOffener(c.id);
     return `<div class="card"><div class="card-head"><span class="h">Ergebnis</span>` +
-      `<span class="badge">${esc(STATUS_LABEL[c._resolved] || "Erledigt")}</span></div>` +
+      `<span class="badge">${esc(AUFGABE_LABEL[c._resolved] || "Erledigt")}</span></div>` +
       `<div class="ergListe">${zeilen.join("")}` +
       (text ? `<div class="erg neutral"><span class="mark">✎</span><div style="min-width:0">` +
         `<div class="et">Freigegebener Text</div>${langtext(text, "Anzeigen")}</div></div>` : "") +
@@ -441,9 +501,28 @@
         `</div>` +
         `<div class="card" style="border-top:none;padding:0 16px 14px;">${skipBox("Überspringen")}</div>`;
     } else {
+      /*
+       * Ohne Entwurf gibt es drei sehr verschiedene Lagen — und nur eine davon
+       * verlangt wirklich etwas vom Nutzer. Deshalb steht bei „Klären" der Weg
+       * nach Pipedrive an erster Stelle und nicht das Überspringen: Wer die
+       * Adresse einträgt, bekommt den Entwurf beim nächsten Lauf von selbst.
+       */
+      const istKlaeren = aufgabeVon(c) === "klaeren";
+      const kopfzeile = istKlaeren
+        ? `<div class="klaerhinweis"><b>Hier fehlt eine Mailadresse.</b> ` +
+          `${c.recipOrg ? `Für <b>${esc(c.recipOrg)}</b> ist keine hinterlegt — weder am Deal noch in der Korrespondenz noch aus anderen Fällen derselben Kanzlei.`
+            : `Am Deal ist keine Kanzlei im Feld „Rechtsanwalt“ gesetzt.`} ` +
+          `Sobald sie in Pipedrive steht, entsteht der Entwurf beim nächsten Lauf von selbst.</div>`
+        : `<span class="note">Kein Entwurf erzeugt — ${esc(c.skipReason || "")}.</span>`;
+
       draftSection =
-        `<div class="card"><div class="actions" style="border-top:none;">` +
-        `<span class="note">Kein Entwurf erzeugt — ${esc(c.skipReason || "")}.</span>` +
+        `<div class="card">` +
+        (istKlaeren ? `<div style="padding:14px 16px 0">${kopfzeile}</div>` : "") +
+        `<div class="actions" style="border-top:none;">` +
+        (istKlaeren ? "" : kopfzeile) +
+        (istKlaeren && c.pipedriveUrl
+          ? `<a class="btn primary" href="${esc(c.pipedriveUrl)}" target="_blank" rel="noopener">In Pipedrive ergänzen ↗</a>`
+          : "") +
         `<div class="spacer"></div>` +
         (c.status === "reguliert"
           ? `<button class="btn ghost" id="skipBtn">Aufgabe abschließen</button>`
@@ -463,8 +542,8 @@
     detailEl.innerHTML =
       `<div class="detail-inner">` +
       `<div class="dhead"><div class="toprow"><h2>${esc(c.name)}</h2>` +
-      `<span class="chip ${c._resolved ? "sent" : c.status}">` +
-      `${STATUS_LABEL[c._resolved || c.status]}</span>` +
+      `<span class="chip ${aufgabeVon(c)}">${AUFGABE_LABEL[aufgabeVon(c)] || ""}</span>` +
+      `<span class="lage">${esc(LAGE_LABEL[lageVon(c)] || "")}</span>` +
       `<span style="margin-left:auto" class="date mono">${esc(c.token)}</span></div>` +
       `<div class="meta-grid">${metaCells(c)}</div></div>` +
       `<div class="ctx">` +
@@ -785,6 +864,7 @@
       showRunInfo(cfg);
       const data = await api("/api/cases");
       CASES = data.cases || [];
+      sortiere();
       renderKpis();
       renderList();
       setView(isMobile() ? "list" : "detail");

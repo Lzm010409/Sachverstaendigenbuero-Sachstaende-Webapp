@@ -98,6 +98,33 @@ async function getDealTasks(dealId) {
   return data || [];
 }
 
+/*
+ * Alle Deals einmal, um zu einer Kanzlei die übrigen Fälle zu finden.
+ *
+ * Hintergrund: Die Kanzlei steht am Deal in einem eigenen Feld, nicht als
+ * Organisation des Deals. Es gibt deshalb keinen Weg, über die API „alle Deals
+ * dieser Kanzlei" zu erfragen — Pipedrive kennt keinen Filter auf ein
+ * Custom-Feld. Bleibt: einmal alles holen und selbst indizieren. Bei gut
+ * tausend Deals sind das drei Aufrufe, und der Puffer hält sie einen halben Tag.
+ */
+const DEALS_TTL_MS = Number(process.env.DEALS_CACHE_STUNDEN || 12) * 3600 * 1000;
+let dealsCache = null;   // { deals, at }
+
+async function getAllDeals({ frisch = false } = {}) {
+  if (!frisch && dealsCache && Date.now() - dealsCache.at < DEALS_TTL_MS) return dealsCache.deals;
+  const out = [];
+  let start = 0;
+  for (let seite = 0; seite < 20; seite++) {
+    const data = await pd("/deals", { query: { start, limit: 500, status: "all_not_deleted" } });
+    if (!data || !data.length) break;
+    out.push(...data);
+    if (data.length < 500) break;
+    start += 500;
+  }
+  dealsCache = { deals: out, at: Date.now() };
+  return out;
+}
+
 async function getDeal(dealId) {
   return pd(`/deals/${dealId}`);
 }
@@ -252,7 +279,7 @@ function dropboxFuerDeal(dealId) {
 
 module.exports = {
   takeRequestCount, cacheStats,
-  getOpenTasks, getDealTasks, getDeal, getStages, getNotes, getPerson, getOrganization,
+  getOpenTasks, getDealTasks, getDeal, getAllDeals, getStages, getNotes, getPerson, getOrganization,
   getDealMails, addNote, completeTask, getOrgPersons, htmlToText, isOurs, OWN_DOMAINS,
   dropboxFuerDeal,
   hasToken: () => Boolean(TOKEN)

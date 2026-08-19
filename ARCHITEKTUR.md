@@ -157,6 +157,74 @@ Fehlschlag eines Durchgangs wird abgebrochen — ist das Kontingent leer, scheit
 
 ---
 
+## 3b. Handlung und Lage
+
+`analyzeCase()` liefert seit dem 19.08.2026 **zwei** Einordnungen statt einer:
+
+| Feld | Frage | Werte |
+|---|---|---|
+| `aufgabe` | Was ist zu TUN? | `pruefen`, `klaeren`, `abschliessen`, `ruht` |
+| `lage` | Worum geht es fachlich? | `erstanfrage`, `nachfassen`, `unbeantwortet`, `rueckfrage`, `verfahren`, `abwarten`, `frist`, `reguliert`, `kein_empfaenger` |
+
+`status` bleibt unverändert daneben bestehen — der Freigabe-Pfad, die gespeicherten
+Fälle und die Kostenbremse hängen daran; ein Umbenennen hätte nichts gebracht außer
+Risiko.
+
+**Warum überhaupt zwei.** Der alte `status` trug beides zugleich, und das war nicht
+bloß unscharf, sondern hatte eine handfeste Folge: „Empfänger unklar" stand
+gleichrangig neben „Überfällig". Ersteres ist ein Loch im Datenbestand, Letzteres eine
+Zeitangabe. Fälle ohne Empfänger erzeugen keinen Entwurf, und die Arbeitsliste zeigte
+(`isPending` = „hat einen Entwurf") genau solche Fälle **nicht an** — obwohl sie die
+einzigen sind, die ohne eine Eingabe des Menschen für immer liegenbleiben. Sie waren
+nur unter „Alle" zu finden, wenn man sie dort suchte.
+
+Die Oberfläche richtet sich seither nach `aufgabe`: Chip, Farbe, Filter, Reihenfolge
+und Kennzahlen. `lage` steht klein daneben und erklärt nur. Auch die Tagesübersicht
+hat einen zweiten Block für die Klärfälle bekommen — sie listete vorher ebenfalls nur
+Fälle mit Entwurf.
+
+Fälle aus der Zeit davor haben kein `aufgabe`. `public/app.js` übersetzt sie über eine
+Tabelle aus `status`, statt den Bestand zu wandern: Beim nächsten Lauf bringt der
+Server die Felder ohnehin mit.
+
+## 3c. Warum Kanzleiadressen fehlen — und was dagegen hilft
+
+Der häufigste Grund für einen Fall ohne Entwurf ist keine Fehlfunktion, sondern eine
+Eigenheit von Pipedrive. Nachgemessen an den vier Kanzleien des Bestands:
+
+- Organisationen haben in diesem Konto **kein Mailfeld**.
+- Sie haben **keine verknüpften Personen** (`people_count = 0` bei allen).
+- `GET /persons?org_id=…` **ignoriert den Filter** und liefert alle Personen zurück.
+
+Die Adresse einer Kanzlei existiert also ausschließlich im Schriftwechsel — und häufig
+an einer *anderen* Akte derselben Kanzlei. Deshalb gibt es `directory.js`, und deshalb
+ist es keine Bequemlichkeit, sondern die einzige Quelle.
+
+Bis zum 19.08.2026 lernte das Verzeichnis nur aus den Fällen, die derselbe Lauf ohnehin
+lud: fällige Aufgaben in erlaubten Phasen. Eine Kanzlei, deren einziger Schriftwechsel
+an einem bezahlten Fall hing, blieb damit unauffindbar — der Phasenfilter (Abschnitt 3)
+hatte diese Quelle zusätzlich verengt. Genau das trat ein: Für „Rechtsanwältin Claudia
+Busch" standen zwei Fälle auf „Empfänger unklar", obwohl die Adresse im Bestand lag.
+
+`worker.kanzleienNachschlagen()` schließt die Lücke. Für jede Kanzlei ohne bekannte
+Adresse:
+
+1. einmal alle Deals holen (`pd.getAllDeals()`, gepuffert über `DEALS_CACHE_STUNDEN`) —
+   es gibt keinen Weg, über die API nach einem Custom-Feld zu filtern;
+2. ihre übrigen Akten heraussuchen, neueste zuerst, höchstens `NACHSCHLAG_DEALS`;
+3. deren Mailverlauf öffnen und die Adresse der Gegenseite herausziehen;
+4. ins Verzeichnis lernen — danach steht sie dauerhaft.
+
+Gemessen: vier Aufrufe für eine unbekannte Kanzlei, zwei zuvor blockierte Fälle gelöst.
+
+**Die Sicherung gegen den schlimmeren Fehler** steckt in `adresseAusMails()`: An
+denselben Akten hängt auch die Versicherung. Eine Versicherungsadresse unter dem Namen
+der Kanzlei zu lernen hieße, die Anfrage an den falschen Empfänger zu richten — das ist
+schlechter als gar keine Adresse. Übernommen wird deshalb nur, was entweder nach
+Kanzlei aussieht (`looksLikeLawyer`) oder den Kanzleinamen in der Domain trägt.
+Eingehende Post wiegt schwerer als ausgehende: Wer uns geschrieben hat, benutzt diese
+Adresse nachweislich.
+
 ## 4. Die Entscheidungskaskade
 
 `analyze.js` arbeitet der Reihe nach; der erste Treffer, der `skipReason` setzt,

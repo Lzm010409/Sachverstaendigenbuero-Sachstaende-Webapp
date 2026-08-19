@@ -78,14 +78,58 @@ Pro Zeile: Aktenzeichen, Anspruchsteller, Empfänger, Status und wie lange gewar
 
 Die Filter oben:
 
+### Die zwei Angaben je Fall
+
+Jeder Fall trägt zwei Angaben. Die erste ist die wichtige:
+
+**Was ist zu tun?** — der farbige Chip. Vier Möglichkeiten:
+
+| Chip | Bedeutung | Dein nächster Schritt |
+|---|---|---|
+| **Prüfen** (blau) | Ein Entwurf liegt vor | freigeben, ändern lassen oder überspringen |
+| **Klären** (rot) | Die Anwendung kommt nicht weiter | in Pipedrive eine Mailadresse ergänzen |
+| **Abschließen** (grün) | Der Fall ist reguliert | Aufgabe in Pipedrive schließen |
+| **Ruht** (gelb) | Eine Frist läuft oder ein Verfahren dauert | nichts — der Fall meldet sich von selbst |
+
+**Worum geht es?** — die kleine graue Zeile daneben: *Erstanfrage, Nachfassen, Ohne
+Antwort, Rückfrage an uns, Verfahren läuft, Abwarten vermerkt, Frist läuft, Reguliert,
+Kein Empfänger*. Sie erklärt den Chip, verlangt aber nichts.
+
+Vorher gab es nur eine Angabe, die beides zugleich sein wollte. Das hatte eine
+unangenehme Folge: Fälle ohne Mailadresse erzeugen keinen Entwurf und standen deshalb
+in der Arbeitsliste **überhaupt nicht** — obwohl gerade sie eine Eingabe von dir
+brauchen. Genau die stehen jetzt unter **Klären** und werden auch in der Tagesübersicht
+genannt.
+
+### Die Filter
+
 | Filter | Zeigt |
 |---|---|
-| **Zu prüfen** | alles, was auf deine Entscheidung wartet (Standard) |
-| **Überfällig** | davon die, deren Frist am längsten läuft |
-| **Rückfragen** | Fälle, in denen die Gegenseite *uns* etwas gefragt hat |
-| **Erledigt** | freigegeben oder übersprungen — zum Nachsehen. Nur wirklich Entschiedenes; „Empfänger unklar" und „Bereits angefragt" stehen unter **Alle** |
-| | *Wie lange bleibt was?* Aus **Zu prüfen** verschwindet ein entschiedener Fall nach `NACHLEUCHTEN_STUNDEN` (6 Stunden). Unter **Erledigt** und **Alle** bleibt er `AUFBEWAHREN_TAGE` (14 Tage) stehen und wird dann aus der Warteschlange entfernt. In Pipedrive bleibt alles erhalten — Notiz und abgeschlossene Aufgabe. |
+| **Zu tun** | Prüfen und Abschließen — alles, was auf dich wartet (Standard) |
+| **Klären** | Fälle, die ohne eine Eingabe in Pipedrive liegenbleiben |
+| **Ruht** | laufende Fristen und Verfahren — nur zum Nachsehen |
+| **Erledigt** | freigegeben oder übersprungen |
 | **Alle** | alles zusammen |
+| | *Wie lange bleibt was?* Aus **Zu tun** verschwindet ein entschiedener Fall nach `NACHLEUCHTEN_STUNDEN` (6 Stunden). Unter **Erledigt** und **Alle** bleibt er `AUFBEWAHREN_TAGE` (14 Tage) stehen und wird dann aus der Warteschlange entfernt. In Pipedrive bleibt alles erhalten — Notiz und abgeschlossene Aufgabe. |
+
+Innerhalb eines Filters steht oben, was am längsten wartet.
+
+### Wenn ein Fall auf „Klären" steht
+
+Dann fehlt die Mailadresse der Kanzlei — und zwar überall: am Deal, in der
+Korrespondenz und in den übrigen Fällen derselben Kanzlei.
+
+Das hat einen Grund, der in Pipedrive liegt: **Kanzleien sind dort als Organisation
+angelegt, aber Organisationen haben in Pipedrive kein Mailfeld und keine verknüpften
+Personen.** Nachgemessen: bei allen Kanzleien steht `people_count = 0`. Die Adresse
+existiert also ausschließlich im Schriftwechsel. Die Anwendung merkt sich deshalb jede
+Adresse, die sie einmal gesehen hat, und sucht bei einer unbekannten Kanzlei von sich
+aus in deren übrigen Akten nach.
+
+Bleibt trotzdem nichts übrig, hilft nur eine Eingabe von dir. Im Fall steht ein roter
+Hinweis mit dem Knopf **„In Pipedrive ergänzen ↗"**, der direkt den Deal öffnet.
+Trage die Adresse ein — beim nächsten Lauf entsteht der Entwurf von selbst. Steht dort
+gar keine Kanzlei, setze zuerst das Feld **Rechtsanwalt** am Deal.
 
 ### Fall ansehen
 
@@ -359,7 +403,8 @@ in einem signierten Cookie (`HttpOnly`, `SameSite=Lax`, hinter HTTPS zusätzlich
 | „Das Konto … ist nicht freigegeben" | Adresse in `ENTRA_ERLAUBTE_NUTZER` ergänzen. |
 | „Anmeldung aus einem fremden Mandanten" | `MS_TENANT_ID` gehört zu einem anderen Verzeichnis. |
 | Liste bleibt leer | Gibt es fällige Aufgaben mit Betreff „Sachstand anfragen" und `due_date <= heute`? Der Knopf **⟳** löst einen Lauf sofort aus. |
-| Ein bestimmter Fall fehlt | Steht sein Deal in einer angefragten Phase? Die Kopfzeile meldet „N nicht in der Phase", `/api/diagnose/stufen` zeigt die Einstellung. |
+| Ein bestimmter Fall fehlt | Steht sein Deal in einer angefragten Phase? Die Kopfzeile meldet „N nicht in der Phase", `/api/diagnose/stufen` zeigt die Einstellung. Steht er unter **Klären**, fehlt die Mailadresse der Kanzlei. |
+| Ein Fall steht dauerhaft auf „Klären" | Die Kanzlei hat in Pipedrive nirgends eine Adresse und in keiner ihrer Akten Schriftwechsel. Adresse am Deal eintragen — danach kennt die Anwendung sie für alle Fälle dieser Kanzlei. |
 | Alle Fälle „Empfänger unklar" | Im Deal fehlt das Feld „Rechtsanwalt" bzw. eine Versicherung. |
 | Entwürfe klingen unpassend | Kategorie am Fall prüfen und den Schwerpunkt in `server/rules.js` anpassen. |
 | Häufig „KI-Entwurf verworfen" | Der Prüfschritt greift zu oft — die Prompt-Regeln müssen nachgeschärft werden. |

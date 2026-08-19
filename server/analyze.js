@@ -176,8 +176,26 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
     )
   );
 
-  // --- Status klassifizieren ----------------------------------------------
+  /*
+   * --- Einordnung ----------------------------------------------------------
+   *
+   * Zwei Angaben statt einer:
+   *
+   *   `aufgabe` — was ist zu TUN? Das ist die Hauptachse der Oberfläche.
+   *   `lage`    — worum geht es fachlich? Erklärt die Aufgabe, entscheidet aber
+   *               nicht über Liste, Filter oder Farbe.
+   *
+   * Vorher trug `status` beides zugleich, und das ging schief: „Empfänger
+   * unklar" stand gleichrangig neben „Überfällig", obwohl das eine ein
+   * Hindernis im Datenbestand ist und das andere eine Zeitangabe. Fälle ohne
+   * Empfänger haben keinen Entwurf und tauchten deshalb in der Arbeitsliste
+   * gar nicht auf — dabei sind sie die einzigen, die eine Eingabe in Pipedrive
+   * verlangen. `status` bleibt unverändert bestehen: Der Rest der Anwendung
+   * (Digest, Freigabe-Pfad, gespeicherte Fälle) hängt daran.
+   */
   let status = "faellig";
+  let aufgabe = "pruefen";   // pruefen | klaeren | abschliessen | ruht
+  let lage = "erstanfrage";
   let calloutType = "info";
   let calloutTitle = null;
   let calloutBody = null;
@@ -198,6 +216,10 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
   });
   if (doneHit) {
     status = "reguliert";
+    // Nichts anzufragen, aber sehr wohl etwas zu tun: Die Aufgabe in Pipedrive
+    // gehört geschlossen, damit die dortige Automatisierung weiterläuft.
+    aufgabe = "abschliessen";
+    lage = "reguliert";
     calloutType = "ok";
     calloutTitle = "Bereits reguliert";
     calloutBody = `${doneHit.label}: „${doneHit.quote}“ — kein Entwurf nötig, Aufgabe kann abgeschlossen werden.`;
@@ -212,6 +234,8 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
     const question = extractRequest(t);
     if (addressedToUs && question) {
       status = "rueckfrage";
+      aufgabe = "pruefen";
+      lage = "rueckfrage";
       calloutType = "warn";
       calloutTitle = "Rückfrage offen";
       calloutBody = `Mail vom ${fmtDE(newest.time)}: „${question}“ — zuerst beantworten, dann Sachstand erfragen.`;
@@ -237,6 +261,8 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
       const age = daysBetween(cand.hit.date, todayISO);
       if (age === null || age > cand.limit) continue;
       status = "abwarten";
+      aufgabe = "ruht";
+      lage = cand.kind === "Gerichtsverfahren" ? "verfahren" : "abwarten";
       calloutType = "warn";
       calloutTitle = cand.kind === "Gerichtsverfahren" ? "Verfahren läuft" : "Abwarten vermerkt";
       calloutBody = `${cand.hit.label}: „${cand.hit.quote}“ — vor ${age} Tagen. `
@@ -265,6 +291,8 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
       const restTage = frist - age;
       const naechste = new Date(Date.parse(lastRequest.date) + frist * 86400000);
       status = "bereits_angefragt";
+      aufgabe = "ruht";
+      lage = "frist";
       calloutType = "ok";
       calloutTitle = "Frist läuft noch";
       calloutBody = `Unsere letzte Sachstandsanfrage: ${lastRequest.label} — vor ${age} von ${frist} Tagen. `
@@ -276,9 +304,17 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
   // 5) Empfänger unklar
   if (!skipReason && (!recipient || !recipient.email)) {
     status = "unklar";
+    // Das Einzige, was ohne Zutun des Menschen nicht weitergeht.
+    aufgabe = "klaeren";
+    lage = "kein_empfaenger";
     calloutType = "warn";
-    calloutTitle = "Empfänger unklar";
-    calloutBody = "Am Deal ist keine Mailadresse der Gegenseite auffindbar (keine Korrespondenz, keine Organisation). Bitte in Pipedrive ergänzen.";
+    calloutTitle = "Empfänger fehlt";
+    calloutBody = recipient && recipient.org
+      ? `Für „${recipient.org}“ ist nirgends eine Mailadresse hinterlegt — weder am Deal, `
+        + `noch in der Korrespondenz, noch aus anderen Fällen derselben Kanzlei. `
+        + `Adresse in Pipedrive ergänzen, dann entsteht der Entwurf beim nächsten Lauf von selbst.`
+      : "Am Deal ist weder eine Kanzlei hinterlegt noch Korrespondenz mit der Gegenseite vorhanden. "
+        + "Bitte in Pipedrive das Feld „Rechtsanwalt“ setzen.";
     skipReason = "Empfänger unklar";
   }
 
@@ -295,9 +331,18 @@ function analyzeCase({ task, deal, notes, mails, person, org, lawyerOrg, today =
     calloutTitle = "Letzter Stand";
   }
 
+  // Der Regelfall hat noch keine Lage bekommen: Er unterscheidet sich danach,
+  // ob wir schon einmal geschrieben haben und ob darauf geantwortet wurde.
+  if (aufgabe === "pruefen" && lage === "erstanfrage") {
+    if (ownRequestUnanswered) lage = "unbeantwortet";
+    else if (sortedMails.length || humanNotes.length) lage = "nachfassen";
+  }
+
   return {
     token,
     status,
+    aufgabe,
+    lage,
     needsDraft: !skipReason,
     isRueckfrage: status === "rueckfrage",
     requestText,
@@ -434,4 +479,4 @@ function firstEmail(entity) {
   return typeof e === "string" ? e : null;
 }
 
-module.exports = { analyzeCase, extractToken, fmtDE, daysBetween, htmlStrip: stripTags, TOKEN_RE };
+module.exports = { analyzeCase, extractToken, fmtDE, daysBetween, htmlStrip: stripTags, TOKEN_RE, looksLikeLawyer };
